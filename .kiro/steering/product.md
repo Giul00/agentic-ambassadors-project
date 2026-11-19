@@ -49,4 +49,5 @@ Un cambio pequeño en un servicio de ejemplo de adquirencia, por ejemplo agregar
 1. Plazo y fecha de entrega.
 2. Criterios de evaluación del hackathon.
 3. Servicio de ejemplo para la demo.
-4. Modelos de Bedrock habilitados en la cuenta.
+4. Modelos de Bedrock: resuelto, ver tech.md (falta repetir la verificación en las otras dos cuentas).
+5. Cuenta AWS donde se hará el despliegue de la presentación (cada integrante tiene una cuenta distinta).

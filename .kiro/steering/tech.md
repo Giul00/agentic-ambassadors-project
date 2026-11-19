@@ -7,13 +7,23 @@ priority: medium
 # Stack técnico
 
 - Agentes: Strands Agents (Python).
-- Modelo: Amazon Bedrock. Confirmar qué modelos están habilitados en la cuenta antes de fijar uno.
+- Modelo: Amazon Bedrock en us-west-2. Verificado con llamadas reales en la cuenta de Tomás (328692565825):
+  - Por defecto: `us.anthropic.claude-sonnet-4-6` (agentes principales).
+  - Pasos rápidos y baratos: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.
+  - Alternativa: `us.amazon.nova-pro-v1:0`.
+  - Usar el ID completo con prefijo `us.` (son inference profiles).
+  - Cada integrante debe repetir la verificación en su propia cuenta.
 - Ejecución: AgentCore Runtime o AWS Lambda.
 - Estado y artefactos: S3 y DynamoDB.
 - Infraestructura como código: AWS CDK (o CloudFormation).
 - Observabilidad: CloudWatch.
 - Región: us-west-2.
-- Cuenta: la temporal del workshop. Las credenciales se obtienen en Workshop Studio y se cargan como variables de entorno de cada persona.
+## Cuentas AWS
+- Cada integrante tiene una cuenta AWS temporal distinta. Las credenciales se obtienen en Workshop Studio y se cargan como variables de entorno de cada persona.
+- Desarrollo y pruebas: cada uno en su cuenta.
+- Despliegue para la presentación: se hace en una sola cuenta (`cuenta de despliegue`, por definir). Solo el sysops ejecuta ese despliegue.
+- Los recursos de AWS no se comparten entre cuentas. Los artefactos entre agentes viajan por Git (carpeta `runs/` o ramas), no por S3 ni DynamoDB de otra cuenta.
+- La infraestructura como código no debe tener IDs de cuenta fijos. Se parametriza la cuenta y la región para poder desplegar en cualquiera.
 
 ## Estructura del repositorio
 - `src/`: código de los agentes y del servicio demo.

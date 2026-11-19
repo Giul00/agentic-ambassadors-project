@@ -16,3 +16,4 @@ Estas reglas aplican a todo el código, los agentes y los comandos que se genere
 6. Cada decisión y traspaso entre agentes deja un registro de auditoría.
 7. Las credenciales temporales del workshop no se suben al repositorio ni se pegan en documentos.
 8. Validar toda entrada externa antes de usarla en comandos, consultas o plantillas.
+9. El despliegue de la presentación se hace en una sola cuenta AWS, acordada por el equipo. Antes de desplegar, comprobar con `aws sts get-caller-identity` que la cuenta activa es la esperada.
