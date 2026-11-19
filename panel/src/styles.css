@@ -133,3 +133,9 @@ a { color: var(--blue); }
   .layout { grid-template-columns: 1fr; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
 }
+
+.nested p { margin: 0.25rem 0; }
+.mini { border-collapse: collapse; width: 100%; margin: 0.35rem 0; font-size: 0.9rem; }
+.mini th, .mini td { border: 1px solid var(--border); padding: 0.35rem 0.55rem; text-align: left; vertical-align: top; }
+.mini th { color: var(--muted); font-weight: 600; background: var(--panel-2); }
+.kv { display: inline-block; margin: 0 0.3rem 0.2rem 0; }

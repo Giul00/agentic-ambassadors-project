@@ -107,8 +107,8 @@ Campos de `artifact` según la etapa (todos incluyen además `run_id`, `created_
 | Etapa | Campos propios |
 |---|---|
 | 1 `requirement` | `title`, `description`, `acceptance_criteria[]`, `affected_service` |
-| 2 `design` | `summary`, `components[]`, `decision`, `risks[]`, `verdict`, `standards_cited[]`, `open_questions[]` |
-| 3 `change` | `branch`, `pull_request_url`, `files_modified[]`, `test_result`, `test_summary` |
+| 2 `design` | `summary`, `components[]`, `decision`, `risks[]`, `verdict`, `standards_cited[]`, `open_questions[]`, `deployment_spec` (objeto o `null`) |
+| 3 `change` | `branch`, `pull_request_url`, `files_modified[]`, `test_result`, `test_summary`, `deliverables[]` |
 | 4 `deployment` | `target_account_id`, `region`, `resources[]`, `estimated_cost_usd`, `rollback_plan`, `health_check`, `rolled_back` |
 
 ### POST /api/runs/{run_id}/stages/{step}/decision

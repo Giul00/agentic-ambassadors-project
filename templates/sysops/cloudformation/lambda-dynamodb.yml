@@ -14,7 +14,23 @@ Parameters:
     Type: String
   LambdaHandler:
     Type: String
-    Default: handler.lambda_handler
+    Default: auth_service.handler.lambda_handler
+    AllowedPattern: '^[A-Za-z0-9_.]{1,128}$'
+  FrequencyPartitionKey:
+    Type: String
+    Default: pk
+    AllowedPattern: '^[A-Za-z0-9_.-]{1,64}$'
+    Description: Clave de partición de la tabla (DeploymentComponent.configuration.partition_key).
+  FrequencyTtlAttribute:
+    Type: String
+    Default: ttl
+    AllowedPattern: '^[A-Za-z0-9_.-]{1,64}$'
+    Description: Atributo TTL de la tabla (DeploymentComponent.configuration.ttl_attribute).
+  FrequencyStore:
+    Type: String
+    Default: dynamodb
+    AllowedValues: [dynamodb, memory]
+    Description: Implementación del contador en la Lambda (configuration.FREQUENCY_STORE).
 
 Resources:
   FrequencyTable:
@@ -22,13 +38,13 @@ Resources:
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: card_token
+        - AttributeName: !Ref FrequencyPartitionKey
           AttributeType: S
       KeySchema:
-        - AttributeName: card_token
+        - AttributeName: !Ref FrequencyPartitionKey
           KeyType: HASH
       TimeToLiveSpecification:
-        AttributeName: expires_at
+        AttributeName: !Ref FrequencyTtlAttribute
         Enabled: true
       SSESpecification:
         SSEEnabled: true
@@ -53,7 +69,7 @@ Resources:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: [dynamodb:GetItem, dynamodb:PutItem]
+                Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
                 Resource: !GetAtt FrequencyTable.Arn
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
@@ -81,6 +97,7 @@ Resources:
       Environment:
         Variables:
           FREQUENCY_TABLE_NAME: !Ref FrequencyTable
+          FREQUENCY_STORE: !Ref FrequencyStore
       Tags:
         - Key: project
           Value: !Ref ProjectName
