@@ -1,6 +1,6 @@
-import type { Stage } from "./types";
+import type { Deliverable, DeploymentSpec, Stage } from "./types";
 
-type Kind = "text" | "list" | "link" | "money" | "bool" | "badge" | "code";
+type Kind = "text" | "list" | "link" | "money" | "bool" | "badge" | "code" | "spec" | "deliverables";
 interface Field {
   label: string;
   field: string;
@@ -22,6 +22,7 @@ const FIELDS: Record<Stage["key"], Field[]> = {
     { label: "Veredicto", field: "verdict", kind: "badge" },
     { label: "Estándares citados", field: "standards_cited", kind: "list" },
     { label: "Preguntas abiertas", field: "open_questions", kind: "list" },
+    { label: "Especificación de despliegue", field: "deployment_spec", kind: "spec" },
   ],
   change: [
     { label: "Rama", field: "branch", kind: "code" },
@@ -29,6 +30,7 @@ const FIELDS: Record<Stage["key"], Field[]> = {
     { label: "Archivos modificados", field: "files_modified", kind: "list" },
     { label: "Resultado de pruebas", field: "test_result", kind: "badge" },
     { label: "Resumen de pruebas", field: "test_summary" },
+    { label: "Entregables", field: "deliverables", kind: "deliverables" },
   ],
   deployment: [
     { label: "Cuenta de despliegue", field: "target_account_id", kind: "code" },
@@ -41,9 +43,87 @@ const FIELDS: Record<Stage["key"], Field[]> = {
   ],
 };
 
+function SpecView({ spec }: { spec: DeploymentSpec }) {
+  return (
+    <div className="nested">
+      <p>
+        Ambiente <code>{spec.environment}</code> · Exposición <code>{spec.network_exposure}</code> · Datos{" "}
+        <code>{spec.data_classification}</code>
+      </p>
+      <table className="mini">
+        <thead>
+          <tr>
+            <th>Componente</th>
+            <th>Tipo</th>
+            <th>Depende de</th>
+            <th>Configuración</th>
+          </tr>
+        </thead>
+        <tbody>
+          {spec.components.map((c) => (
+            <tr key={c.name}>
+              <td>{c.name}</td>
+              <td>
+                <code>{c.kind}</code>
+              </td>
+              <td>{c.depends_on.join(", ") || "—"}</td>
+              <td>
+                {Object.entries(c.configuration).length === 0
+                  ? "—"
+                  : Object.entries(c.configuration).map(([k, v]) => (
+                      <code key={k} className="kv">
+                        {k}={v}
+                      </code>
+                    ))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>Health check: {spec.health_check}</p>
+      <p>Rollback: {spec.rollback_strategy}</p>
+      <p>Observabilidad: {spec.observability.join(", ")}</p>
+    </div>
+  );
+}
+
+function DeliverablesView({ items }: { items: Deliverable[] }) {
+  if (items.length === 0) return <span className="muted">Ninguno</span>;
+  return (
+    <table className="mini">
+      <thead>
+        <tr>
+          <th>Componente</th>
+          <th>Tipo</th>
+          <th>Ruta</th>
+          <th>Entrypoint</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((d) => (
+          <tr key={d.component}>
+            <td>{d.component}</td>
+            <td>
+              <code>{d.kind}</code>
+            </td>
+            <td>
+              <code>{d.source_path}</code>
+            </td>
+            <td>{d.entrypoint ? <code>{d.entrypoint}</code> : "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 function Value({ kind = "text", value }: { kind?: Kind; value: unknown }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   switch (kind) {
+    case "spec":
+      return <SpecView spec={value as DeploymentSpec} />;
+    case "deliverables":
+      return <DeliverablesView items={value as Deliverable[]} />;
     case "list": {
       const items = value as string[];
       if (items.length === 0) return <span className="muted">Ninguno</span>;

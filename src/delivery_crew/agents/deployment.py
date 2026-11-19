@@ -10,11 +10,57 @@ import sys
 import yaml
 
 from delivery_crew.contracts import Change, Deployment, Design
+from delivery_crew.conventions import SAFE_VALUE
 from delivery_crew.runs import NotApprovedError, RunStore
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_ROOT = REPOSITORY_ROOT / "templates" / "sysops"
+
+# Traducción de la configuración de Arquitectura a parámetros de la plantilla lambda-dynamodb.
+TEMPLATE_PARAMETERS: dict[str, dict[str, str]] = {
+    "dynamodb": {"partition_key": "FrequencyPartitionKey", "ttl_attribute": "FrequencyTtlAttribute"},
+    "lambda": {"FREQUENCY_STORE": "FrequencyStore"},
+}
+PIPELINE_EXTRA_OVERRIDES = 'CF_EXTRA_PARAMETER_OVERRIDES: ""'
+
+
+def parameter_overrides(design: Design, change: Change) -> dict[str, str]:
+    """Parámetros de CloudFormation a partir del deployment_spec y los entregables.
+
+    Falla si la configuración no tiene parámetro en la plantilla, si dos componentes piden
+    valores distintos para el mismo parámetro, o si un entregable apunta a una ruta inexistente.
+    """
+    spec = design.deployment_spec
+    if spec is None:
+        raise ValueError("el diseño no contiene deployment_spec estructurado")
+    overrides: dict[str, str] = {}
+
+    def put(parameter: str, value: str, origin: str) -> None:
+        if not SAFE_VALUE.fullmatch(value):
+            raise ValueError(f"valor no permitido para {parameter} ({origin}): {value!r}")
+        if overrides.get(parameter, value) != value:
+            raise ValueError(f"valores en conflicto para {parameter}: {overrides[parameter]!r} y {value!r}")
+        overrides[parameter] = value
+
+    for component in spec.components:
+        mapping = TEMPLATE_PARAMETERS.get(component.kind, {})
+        unsupported = sorted(set(component.configuration) - set(mapping))
+        if unsupported:
+            raise ValueError(
+                f"la plantilla no soporta la configuración de {component.name}: {', '.join(unsupported)}"
+            )
+        for key, value in component.configuration.items():
+            put(mapping[key], value, component.name)
+
+    lambdas = {c.name for c in spec.components if c.kind == "lambda"}
+    for artifact in change.deliverables:
+        source = (REPOSITORY_ROOT / artifact.source_path).resolve()
+        if REPOSITORY_ROOT not in source.parents or not source.is_dir():
+            raise ValueError(f"el entregable de {artifact.component} apunta a una ruta inexistente: {artifact.source_path}")
+        if artifact.component in lambdas and artifact.entrypoint:
+            put("LambdaHandler", artifact.entrypoint, artifact.component)
+    return overrides
 
 
 def select_template_profiles(design: Design) -> list[str]:
@@ -38,7 +84,8 @@ def select_template_profiles(design: Design) -> list[str]:
     return selected
 
 
-def generate_bundle(store: RunStore, design: Design, change: Change, deployment: Deployment, profiles: list[str]) -> Path:
+def generate_bundle(store: RunStore, design: Design, change: Change, deployment: Deployment, profiles: list[str],
+                    overrides: dict[str, str] | None = None) -> Path:
     """Render reviewable IaC, pipeline and verification assets for a run.
 
     The output is intentionally an artifact of the run: it is reviewed and promoted
@@ -66,6 +113,12 @@ def generate_bundle(store: RunStore, design: Design, change: Change, deployment:
     pipeline = (TEMPLATE_ROOT / catalog["pipeline"]["template"]).read_text(encoding="utf-8")
     pipeline = pipeline.replace("templates/generated/stack.yml", f"generated/{primary_template}")
     pipeline = pipeline.replace("./scripts/health-check.sh", "./generated/scripts/health-check-authorize.sh")
+    overrides = overrides or {}
+    if overrides:
+        if PIPELINE_EXTRA_OVERRIDES not in pipeline:
+            raise ValueError("la plantilla del pipeline no admite parámetros adicionales")
+        rendered = " ".join(f"{key}={value}" for key, value in sorted(overrides.items()))
+        pipeline = pipeline.replace(PIPELINE_EXTRA_OVERRIDES, f'CF_EXTRA_PARAMETER_OVERRIDES: "{rendered}"')
     (bundle / ".gitlab-ci-sysops.yml").write_text(pipeline, encoding="utf-8")
     shutil.copyfile(TEMPLATE_ROOT / "health-check-authorize.sh", scripts / "health-check-authorize.sh")
 
@@ -79,6 +132,7 @@ def generate_bundle(store: RunStore, design: Design, change: Change, deployment:
         "region": deployment.region,
         "template_profiles": profiles,
         "cloudformation_templates": selected_templates,
+        "parameter_overrides": overrides,
         "pipeline": ".gitlab-ci-sysops.yml",
         "health_check": "scripts/health-check-authorize.sh",
         "required_ci_variables": ["AWS_DEFAULT_REGION", "CF_STACK_NAME", "HEALTHCHECK_URL", "PREVIOUS_APPROVED_TEMPLATE"],
@@ -104,6 +158,7 @@ def create_plan(run_id: str, target_account_id: str, region: str = "us-west-2", 
     missing_artifacts = compute_components - artifact_components
     if missing_artifacts:
         raise ValueError(f"Desarrollo no entregó artefactos para: {', '.join(sorted(missing_artifacts))}")
+    overrides = parameter_overrides(design, change)
     resources = [f"{component.kind}: {component.name}" for component in spec.components]
     resources.extend(f"Observabilidad: {item}" for item in spec.observability)
     deployment = Deployment(
@@ -117,11 +172,12 @@ def create_plan(run_id: str, target_account_id: str, region: str = "us-west-2", 
         body=(f"Plan generado para la rama `{change.branch}`. Pruebas del desarrollador: {change.test_summary}.\n\n"
               f"Diseño de Arquitectura: {design.decision}\n"
               f"Health check aprobado: {spec.health_check}\n"
-              f"Perfiles seleccionados desde `templates/sysops/catalog.yml`: {', '.join(profiles)}.\n\n"
+              f"Perfiles seleccionados desde `templates/sysops/catalog.yml`: {', '.join(profiles)}.\n"
+              f"Parámetros de la plantilla: {', '.join(f'{k}={v}' for k, v in sorted(overrides.items())) or 'por defecto'}.\n\n"
               "Pendiente de aprobación humana de SysOps. Este agente no ejecuta `cdk deploy`."),
     )
     store.write(deployment, actor="agente-despliegue")
-    bundle = generate_bundle(store, design, change, deployment, profiles)
+    bundle = generate_bundle(store, design, change, deployment, profiles, overrides)
     store.audit("agente-despliegue", "deployment_plan_created", source_branch=change.branch)
     return deployment
 

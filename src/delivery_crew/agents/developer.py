@@ -19,12 +19,12 @@ import textwrap
 from pathlib import Path
 from typing import Callable
 
-from ..contracts import Change, Design, Requirement
+from ..contracts import Change, DeployableArtifact, Design, Requirement
+from ..conventions import FREQUENCY_TABLE_ENV, LAMBDA_BUILD_COMMAND, LAMBDA_ENTRYPOINT, SERVICE_DIR
 from ..runs import NotApprovedError, RunStore
 from .sandbox import Sandbox, SandboxError, TestRun
 
 ACTOR = "agente-desarrollador"
-SERVICE_DIR = "services/auth_service"
 WORKTREES_DIR = ".worktrees"
 MAX_DIFF_CHARS = 30_000
 GIT_AUTHOR = ["-c", "user.name=Agente Desarrollador", "-c", "user.email=agente-desarrollador@delivery-crew.local"]
@@ -106,6 +106,46 @@ def stage_and_diff(worktree: Path) -> tuple[list[str], str]:
 
 # --- prompt ----------------------------------------------------------------
 
+def deployment_section(design: Design) -> str:
+    """Restricciones de infraestructura que el código debe respetar al pie de la letra."""
+    spec = design.deployment_spec
+    if spec is None:
+        return ""
+    lines = [
+        "## Especificación de despliegue de Arquitectura (obligatoria)",
+        "La infraestructura se genera con estos valores exactos. Si tu código usa otros nombres, "
+        "fallará en AWS aunque las pruebas pasen.",
+    ]
+    for comp in spec.components:
+        config = ", ".join(f"{k}={v}" for k, v in sorted(comp.configuration.items())) or "sin configuración"
+        lines.append(f"- {comp.name} ({comp.kind}): {config}")
+        if comp.kind == "dynamodb":
+            if "partition_key" in comp.configuration:
+                lines.append(f"  - La clave de partición de la tabla se llama exactamente "
+                             f"'{comp.configuration['partition_key']}' (tipo String).")
+            if "ttl_attribute" in comp.configuration:
+                lines.append(f"  - El atributo TTL se llama exactamente '{comp.configuration['ttl_attribute']}' "
+                             "(Number, epoch en segundos).")
+            lines.append(f"  - El nombre de la tabla llega en la variable de entorno {FREQUENCY_TABLE_ENV}.")
+            lines.append("  - El rol de la Lambda tiene permiso de dynamodb:GetItem, PutItem y UpdateItem.")
+        if comp.kind == "lambda":
+            for key, value in sorted(comp.configuration.items()):
+                lines.append(f"  - La Lambda recibe la variable de entorno {key}={value}.")
+            lines.append(f"  - Handler: {LAMBDA_ENTRYPOINT}.")
+    return "\n".join(lines)
+
+
+def build_deliverables(design: Design) -> list[DeployableArtifact]:
+    """Un zip del servicio por cada componente Lambda del diseño. Valores fijos, no del modelo."""
+    if design.deployment_spec is None:
+        return []
+    return [
+        DeployableArtifact(component=comp.name, kind="zip", source_path=SERVICE_DIR,
+                           build_command=LAMBDA_BUILD_COMMAND, entrypoint=LAMBDA_ENTRYPOINT)
+        for comp in design.deployment_spec.components if comp.kind == "lambda"
+    ]
+
+
 def build_prompt(req: Requirement, design: Design, feedback: str | None = None) -> str:
     criteria = "\n".join(f"- {c}" for c in req.acceptance_criteria)
     components = "\n".join(f"- {c}" for c in design.components)
@@ -118,7 +158,7 @@ def build_prompt(req: Requirement, design: Design, feedback: str | None = None) 
             "Tu implementación debe resolverlo explícitamente y cubrirlo con pruebas:\n"
             f"> {feedback}"
         )
-    return textwrap.dedent(f"""
+    prompt = textwrap.dedent(f"""
         Implementa este cambio en {req.affected_service}.
 
         ## Requerimiento: {req.title}
@@ -136,7 +176,11 @@ def build_prompt(req: Requirement, design: Design, feedback: str | None = None) 
         {risks}
 
         {design.body}
-    """).strip() + review
+    """).strip()
+    infra = deployment_section(design)
+    if infra:
+        prompt += "\n\n" + infra
+    return prompt + review
 
 
 def retry_prompt(result: TestRun) -> str:
@@ -271,6 +315,7 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
         files_modified=files,
         test_result="passed" if result.passed else "failed",
         test_summary=result.summary,
+        deliverables=build_deliverables(design),
         body=body,
     )
     store.write(change, actor=ACTOR)

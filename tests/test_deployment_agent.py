@@ -79,5 +79,5 @@ def _change() -> Change:
     return Change(
         run_id="demo-001", branch="feature/code-65", files_modified=["src/rules.py"],
         test_result="passed", test_summary="12 passed",
-        deliverables=[DeployableArtifact(component="handler", kind="zip", source_path="src/auth_service", build_command="zip -r artifact.zip .")],
+        deliverables=[DeployableArtifact(component="handler", kind="zip", source_path="services/auth_service", build_command="zip -r artifact.zip .")],
     )

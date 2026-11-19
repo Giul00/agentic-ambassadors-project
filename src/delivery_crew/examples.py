@@ -9,7 +9,17 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .contracts import Approval, Change, DeployableArtifact, Deployment, DeploymentComponent, DeploymentSpec, Design, Requirement
+from .contracts import (
+    Approval,
+    Change,
+    DeployableArtifact,
+    Deployment,
+    DeploymentComponent,
+    DeploymentSpec,
+    Design,
+    Requirement,
+)
+from .conventions import LAMBDA_BUILD_COMMAND, LAMBDA_ENTRYPOINT
 from .runs import RunStore
 
 DEMO_RUN_ID = "demo-0001"
@@ -53,8 +63,10 @@ def design(run_id: str = DEMO_RUN_ID, approved: bool = True) -> Design:
             environment="qa",
             components=[
                 DeploymentComponent(name="auth-api", kind="api_gateway", depends_on=["auth-handler"]),
-                DeploymentComponent(name="auth-handler", kind="lambda", depends_on=["frequency-store"]),
-                DeploymentComponent(name="frequency-store", kind="dynamodb"),
+                DeploymentComponent(name="auth-handler", kind="lambda", depends_on=["frequency-store"],
+                                    configuration={"FREQUENCY_STORE": "dynamodb"}),
+                DeploymentComponent(name="frequency-store", kind="dynamodb",
+                                    configuration={"partition_key": "pk", "ttl_attribute": "ttl"}),
             ],
             network_exposure="public",
             data_classification="synthetic",
@@ -76,7 +88,8 @@ def change(run_id: str = DEMO_RUN_ID, approved: bool = True) -> Change:
         files_modified=["services/auth_service/auth_service/rules.py", "services/auth_service/tests/test_auth_rules.py"],
         test_result="passed",
         test_summary="12 pruebas, 12 correctas.",
-        deliverables=[DeployableArtifact(component="auth-handler", kind="zip", source_path="src/auth_service", build_command="zip -r auth-service.zip .", entrypoint="handler.lambda_handler")],
+        deliverables=[DeployableArtifact(component="auth-handler", kind="zip", source_path="services/auth_service",
+                                         build_command=LAMBDA_BUILD_COMMAND, entrypoint=LAMBDA_ENTRYPOINT)],
         approval=_approved("desarrollador") if approved else Approval(),
     )
 

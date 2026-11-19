@@ -57,3 +57,28 @@ export interface AuditEntry {
   artifact?: string;
   reason?: string;
 }
+
+export interface DeploymentComponent {
+  name: string;
+  kind: string;
+  depends_on: string[];
+  configuration: Record<string, string>;
+}
+
+export interface DeploymentSpec {
+  environment: "dev" | "qa" | "uat" | "prod";
+  components: DeploymentComponent[];
+  network_exposure: "private" | "internal" | "public";
+  data_classification: "synthetic" | "internal" | "confidential";
+  health_check: string;
+  rollback_strategy: string;
+  observability: string[];
+}
+
+export interface Deliverable {
+  component: string;
+  kind: "zip" | "container" | "static" | "package";
+  source_path: string;
+  build_command: string;
+  entrypoint: string | null;
+}

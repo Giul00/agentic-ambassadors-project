@@ -13,6 +13,8 @@ from typing import ClassVar, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from .conventions import CONFIGURATION_KEYS, SAFE_VALUE
+
 ApprovalStatus = Literal["pendiente", "aprobado", "rechazado"]
 Verdict = Literal["aprobado", "observaciones", "rechazado"]
 
@@ -112,6 +114,21 @@ class DeploymentComponent(BaseModel):
     kind: str = Field(min_length=2, pattern=r"^[a-z][a-z0-9_-]*$")
     depends_on: list[str] = Field(default_factory=list)
     configuration: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _configuration_follows_convention(self) -> "DeploymentComponent":
+        allowed = CONFIGURATION_KEYS.get(self.kind)
+        if allowed is not None:
+            unknown = sorted(set(self.configuration) - allowed)
+            if unknown:
+                raise ValueError(
+                    f"configuración no reconocida para {self.kind} '{self.name}': {', '.join(unknown)}; "
+                    f"claves permitidas: {', '.join(sorted(allowed))}"
+                )
+        bad = sorted(k for k, v in self.configuration.items() if not SAFE_VALUE.fullmatch(v))
+        if bad:
+            raise ValueError(f"valores no permitidos en configuración ({', '.join(bad)}): use letras, números, '_', '.' o '-'")
+        return self
 
 
 class DeploymentSpec(BaseModel):
