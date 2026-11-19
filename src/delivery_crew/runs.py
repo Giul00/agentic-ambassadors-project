@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 from pathlib import Path
 from typing import TypeVar
 
@@ -12,6 +13,9 @@ from .contracts import BY_STEP, Approval, Artifact, ContractError, utcnow
 A = TypeVar("A", bound=Artifact)
 
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+# Los agentes ejecutan herramientas en paralelo (varios hilos escriben la auditoría a la vez).
+_AUDIT_LOCK = threading.Lock()
 
 
 class NotApprovedError(PermissionError):
@@ -30,7 +34,7 @@ class RunStore:
 
     def create(self) -> "RunStore":
         self.path.mkdir(parents=True, exist_ok=True)
-        self.audit("orchestrator", "run_created")
+        self.audit("orquestador", "run_created")
         return self
 
     # --- artefactos ---------------------------------------------------------
@@ -86,10 +90,22 @@ class RunStore:
         self.path.mkdir(parents=True, exist_ok=True)
         entry = {"run_id": self.run_id, "at": utcnow().isoformat(), "actor": actor,
                  "action": action, **{k: v for k, v in details.items() if v is not None}}
-        with self.audit_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        line = json.dumps(entry, ensure_ascii=False) + "\n"
+        with _AUDIT_LOCK, self.audit_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
 
     def read_audit(self) -> list[dict]:
+        """Eventos en orden. Una línea dañada se omite en lugar de romper la lectura."""
         if not self.audit_path.exists():
             return []
-        return [json.loads(line) for line in self.audit_path.read_text(encoding="utf-8").splitlines() if line]
+        events = []
+        for line in self.audit_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        return events
