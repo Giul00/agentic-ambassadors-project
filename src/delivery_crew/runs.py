@@ -30,7 +30,7 @@ class RunStore:
 
     def create(self) -> "RunStore":
         self.path.mkdir(parents=True, exist_ok=True)
-        self.audit("orchestrator", "run_created")
+        self.audit("orquestador", "run_created")
         return self
 
     # --- artefactos ---------------------------------------------------------

@@ -48,7 +48,7 @@ def create_samples(base_dir: str | Path) -> list[str]:
     for art in (examples.requirement(rid), examples.design(rid), examples.change(rid), examples.deployment(rid)):
         _put(s, art)
     _write_audit(s, [
-        (0, "orchestrator", "run_created", None),
+        (0, "orquestador", "run_created", None),
         (0, "orquestador", "artifact_written", "01-requerimiento.md"),
         (1, "arquitecto", "artifact_written", "02-diseno.md"),
         (2, "arquitecto", "approval_aprobado", "02-diseno.md"),
@@ -63,7 +63,7 @@ def create_samples(base_dir: str | Path) -> list[str]:
     _put(s, examples.requirement(rid))
     _put(s, examples.design(rid, approved=False))
     _write_audit(s, [
-        (0, "orchestrator", "run_created", None),
+        (0, "orquestador", "run_created", None),
         (0, "orquestador", "artifact_written", "01-requerimiento.md"),
         (1, "arquitecto", "artifact_written", "02-diseno.md"),
     ])
@@ -76,7 +76,7 @@ def create_samples(base_dir: str | Path) -> list[str]:
                                  reason="Usa memoria de la Lambda; no cumple el estándar de estado compartido.")
     _put(s, rejected)
     _write_audit(s, [
-        (0, "orchestrator", "run_created", None),
+        (0, "orquestador", "run_created", None),
         (0, "orquestador", "artifact_written", "01-requerimiento.md"),
         (1, "arquitecto", "artifact_written", "02-diseno.md"),
         (3, "arquitecto", "approval_rechazado", "02-diseno.md"),
@@ -86,7 +86,7 @@ def create_samples(base_dir: str | Path) -> list[str]:
     s = RunStore(rid, base).create()
     _put(s, examples.requirement(rid, approved=False))
     _write_audit(s, [
-        (0, "orchestrator", "run_created", None),
+        (0, "orquestador", "run_created", None),
         (0, "orquestador", "artifact_written", "01-requerimiento.md"),
     ])
 
