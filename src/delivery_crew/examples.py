@@ -43,6 +43,7 @@ def requirement(run_id: str = DEMO_RUN_ID, approved: bool = True) -> Requirement
             "La cuarta solicitud en 60 segundos devuelve response_code 65.",
             "Las tres primeras solicitudes no se ven afectadas.",
             "El código 65 aparece en la respuesta de la API.",
+            "Un card_token con 2 solicitudes por minuto, sostenidas en el tiempo, nunca recibe 65.",
         ],
         affected_service="auth-service",
         approval=_approved("usuario") if approved else Approval(),

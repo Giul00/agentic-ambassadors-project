@@ -54,10 +54,20 @@ SYSTEM_PROMPT = textwrap.dedent("""
     4. Las pruebas no pueden usar AWS ni red. Si el diseño usa un servicio de AWS (por ejemplo DynamoDB),
        define una interfaz, una implementación en memoria para pruebas y otra con boto3 para producción,
        y elige la implementación por variable de entorno. Importa boto3 solo dentro de la implementación real.
+       La implementación real también se prueba: con un cliente o tabla falsos en memoria que simulen las
+       operaciones que usas (incluidas las condiciones), sin red.
     5. Nada de datos reales de tarjetas ni secretos en el código.
     6. write_file reemplaza el archivo completo: escribe siempre el contenido entero.
-    7. Ejecuta run_tests y corrige hasta que todas las pruebas pasen.
-    8. Al terminar responde, en español y en pocas líneas: qué cambiaste, qué archivos, qué variables
+    7. Ejecuta run_tests y corrige hasta que todas las pruebas pasen. Las pruebas existentes no se pueden
+       modificar: fijan el comportamiento actual. Si tu cambio rompe una, corrige el código.
+    8. No cambies el contrato HTTP del servicio salvo que el requerimiento lo pida: un rechazo de negocio
+       (cualquier response_code distinto de 00) responde HTTP 200 con approved=false. Tampoco cambies
+       mensajes ni códigos existentes.
+    9. Si implementas una ventana de tiempo, pruébala con un reloj simulado en ambas implementaciones,
+       incluido el caso de solicitudes espaciadas por debajo del límite, que nunca deben rechazarse aunque
+       se sostengan en el tiempo. Renovar el vencimiento en cada solicitud convierte la ventana en un
+       bloqueo permanente: evítalo.
+    10. Al terminar responde, en español y en pocas líneas: qué cambiaste, qué archivos, qué variables
        de entorno o recursos de infraestructura nuevos necesita el despliegue, y el resultado de las pruebas.
 """).strip()
 

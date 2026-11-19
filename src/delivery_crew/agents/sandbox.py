@@ -36,13 +36,20 @@ class TestRun:
 
 class Sandbox:
     def __init__(self, workdir: str | Path, service_dir: str = "services/auth_service",
-                 on_event: EventHook | None = None) -> None:
+                 on_event: EventHook | None = None, protect_existing_tests: bool = True) -> None:
         self.workdir = Path(workdir).resolve()
         self.root = (self.workdir / service_dir).resolve()
         self.service_dir = service_dir
         if not self.root.is_dir():
             raise SandboxError(f"no existe la carpeta del servicio: {self.root}")
         self._on_event = on_event or (lambda action, details: None)
+        # Las pruebas existentes fijan el comportamiento actual: el agente agrega pruebas nuevas,
+        # pero no puede editar las que ya existen para hacer pasar su cambio.
+        self.protected: frozenset[Path] = frozenset()
+        if protect_existing_tests:
+            protected = {p.resolve() for p in (self.root / "tests").rglob("*") if p.is_file()} if (self.root / "tests").is_dir() else set()
+            protected |= {p.resolve() for p in self.root.glob("*.ini")}
+            self.protected = frozenset(protected)
 
     # --- rutas -------------------------------------------------------------
 
@@ -85,6 +92,12 @@ class Sandbox:
 
     def write_file(self, rel_path: str, content: str) -> str:
         target = self.resolve(rel_path)
+        if target in self.protected:
+            raise SandboxError(
+                f"{self.relative(target)} es una prueba existente y no se puede modificar: fija el "
+                "comportamiento actual del servicio. Si tu cambio la rompe, corrige el código; agrega "
+                "tus pruebas en un archivo nuevo de tests/"
+            )
         if target.suffix not in ALLOWED_SUFFIXES:
             raise SandboxError(f"extensión no permitida: {target.suffix or '(sin extensión)'}")
         data = content.encode("utf-8")
