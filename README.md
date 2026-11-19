@@ -33,6 +33,7 @@ python -m delivery_crew.check_env --expect-account 123456789012   # antes de des
 - `docs/arquitectura.md`: diagramas y decisiones iniciales.
 - `docs/caso-demo.md`: caso demo, guion y plan B.
 - `docs/api.md`: API del panel de control, para el front en React.
+- `panel/README.md`: cómo levantar el panel visual (React).
 - `aidlc/plan.md`: plan de trabajo, reparto y orden de merges.
 - `aidlc/units/`: siete unidades de trabajo.
 - `aidlc/elaboration-log.md`: supuestos por confirmar.
