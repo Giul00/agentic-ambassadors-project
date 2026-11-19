@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "delivery-crew-sysops-agent"
+version = "0.1.0"
+description = "Agente de planificación de despliegues para Delivery Crew"
+requires-python = ">=3.10"
+
+

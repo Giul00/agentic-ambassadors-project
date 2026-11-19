@@ -25,6 +25,10 @@ Sistema multiagente que lleva un cambio de requerimiento a despliegue verificado
 - `.kiro/templates/`: plantillas del planificador.
 - `src/`, `infra/`, `docs/`: código, infraestructura y documentación.
 
+## Agente SysOps
+
+El primer MVP del agente de Despliegue está en `src/deployment_agent/`. Valida que el handoff del desarrollador esté aprobado y genera el artefacto `04-despliegue.md`; no despliega ni invoca AWS. Ver [la guía del agente](docs/sysops-agent.md).
+
 ## Credenciales AWS
 Las credenciales del workshop son temporales y personales. Se cargan como variables de entorno en la terminal de cada persona. No se suben al repositorio.
 
