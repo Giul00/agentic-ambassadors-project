@@ -29,6 +29,13 @@ python -m delivery_crew.check_env
 python -m delivery_crew.check_env --expect-account 123456789012   # antes de desplegar
 ```
 
+## Demo de punta a punta
+Con credenciales AWS en el entorno y el panel levantado:
+```powershell
+.\.venv\Scripts\python.exe -m delivery_crew.orchestrator start --run-id demo-vivo --example --by tomas --target-account 123456789012
+```
+El flujo se ve en el panel y se aprueba desde ahí. Detalle en `docs/orquestador.md`.
+
 ## Documentación
 - `docs/arquitectura.md`: diagramas y decisiones iniciales.
 - `docs/caso-demo.md`: caso demo, guion y plan B.
