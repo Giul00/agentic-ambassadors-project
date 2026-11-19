@@ -34,7 +34,7 @@
 
 | # | Unit | File | Dependencies | Status |
 |---|------|------|-------------|--------|
-| 01 | Base y contratos | aidlc/units/01-base-y-contratos.md | None | Pending |
+| 01 | Base y contratos | aidlc/units/01-base-y-contratos.md | None | In review (PR pendiente) |
 | 02 | Servicio demo auth-service | aidlc/units/02-servicio-demo-auth.md | 01 | Pending |
 | 03 | Agente Arquitecto | aidlc/units/03-agente-arquitecto.md | 01 | Pending |
 | 04 | Agente Desarrollador | aidlc/units/04-agente-desarrollador.md | 01, 02 | Pending |
