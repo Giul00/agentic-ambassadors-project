@@ -7,6 +7,7 @@ priority: medium
 # Stack técnico
 
 - Agentes: Strands Agents (Python).
+- Lenguaje: Python 3.11 o superior en todo el proyecto (agentes, servicio demo y CDK). Decidido por el equipo.
 - Modelo: Amazon Bedrock en us-west-2. Verificado con llamadas reales en la cuenta de Tomás (328692565825):
   - Por defecto: `us.anthropic.claude-sonnet-4-6` (agentes principales).
   - Pasos rápidos y baratos: `us.anthropic.claude-haiku-4-5-20251001-v1:0`.

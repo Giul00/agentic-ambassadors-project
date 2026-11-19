@@ -1,6 +1,6 @@
 # Agente SysOps / Despliegue
 
-Este MVP implementa el primer límite de seguridad del agente de Despliegue: planifica, pero no ejecuta infraestructura. Consume el contrato `runs/<id>/03-cambio.md` y solo genera `04-despliegue.md` cuando detecta una aprobación humana explícita.
+Este MVP implementa el primer límite de seguridad del agente de Despliegue: planifica, pero no ejecuta infraestructura. Consume el contrato tipado `Change` en `runs/<id>/03-cambio.md` y solo genera `Deployment` en `04-despliegue.md` cuando detecta una aprobación humana explícita.
 
 ## Flujo
 
@@ -19,11 +19,10 @@ cdk synth/diff → aprobación → deploy → health check → rollback si corre
 
 ## Uso local
 
-El archivo de entrada debe contener los campos del contrato: `rama`, `enlace al pull request`, `archivos modificados`, `resultado de las pruebas` y `estado de aprobación humana: aprobado`.
+El archivo de entrada usa YAML front matter y los campos del contrato compartido: `branch`, `pull_request_url`, `files_modified`, `test_result`, `test_summary` y `approval.status: aprobado`.
 
 ```powershell
-$env:PYTHONPATH = "src"
-python -m deployment_agent.cli demo-001
+python -m delivery_crew.agents.deployment demo-001 --target-account 123456789012
 ```
 
 La siguiente iteración incorporará una herramienta de ejecución separada. Antes de que pueda ejecutar un despliegue deberá recibir: una aprobación de SysOps, la cuenta AWS de presentación esperada y los comandos CDK/destino aprobados. Así se evita que una entrada del repositorio active infraestructura por sí sola.

@@ -12,6 +12,23 @@ Sistema multiagente que lleva un cambio de requerimiento a despliegue verificado
    ```
 3. El steering AI-DLC se carga solo. Para planificar, describir la idea y el planificador hará preguntas una por una hasta generar las unidades de trabajo en `aidlc/`.
 
+## Entorno de desarrollo (Python)
+Requiere Python 3.11 o superior.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1          # en Linux o macOS: source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+```
+
+Para comprobar tu cuenta AWS, carga tus credenciales como variables de entorno y ejecuta:
+
+```powershell
+python -m delivery_crew.check_env
+python -m delivery_crew.check_env --expect-account 123456789012   # antes de desplegar
+```
+
 ## Documentación
 - `docs/arquitectura.md`: diagramas y decisiones iniciales.
 - `docs/caso-demo.md`: caso demo, guion y plan B.
