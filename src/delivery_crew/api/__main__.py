@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import re
+import sys
 
 
 def _active_account() -> str | None:
@@ -36,6 +38,22 @@ def main() -> None:
         print("Despliegue real ACTIVADO: al aprobar el plan se crea el stack en AWS.")
     else:
         print("Despliegue real desactivado: el flujo termina en el plan aprobado (use --deploy para activarlo).")
+
+    from ..workspace import github_token
+
+    token = github_token()
+    if not token and sys.stdin.isatty():
+        try:
+            token = getpass.getpass("Token de GitHub para abrir y mergear PRs (Enter para omitir; no se muestra): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            token = ""
+        if token:
+            os.environ["GITHUB_TOKEN"] = token
+    token = github_token()
+    if token:
+        print(f"GitHub: token cargado (termina en ...{token[-4:]}). Se abrirán y mergearán PRs.")
+    else:
+        print("GitHub: sin token. Las ramas quedan locales (sin PR ni merge).")
 
     if args.runs_dir:
         os.environ["DELIVERY_CREW_RUNS_DIR"] = args.runs_dir

@@ -71,8 +71,13 @@ def parse_repo_url(url: str) -> RepoRef:
 
 
 def github_token() -> str | None:
-    token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-    return token.strip() if token and token.strip() else None
+    """Token de GitHub del entorno. Tolera errores comunes de `set` en cmd (espacios, comillas)."""
+    for key, value in os.environ.items():
+        if key.strip().upper() in ("GITHUB_TOKEN", "GH_TOKEN"):
+            token = value.strip().strip('"').strip("'").strip()
+            if token:
+                return token
+    return None
 
 
 def _scrub(text: str) -> str:
