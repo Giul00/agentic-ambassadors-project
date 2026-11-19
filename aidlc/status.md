@@ -17,7 +17,7 @@
 | Questions asked | 0 (omitidas, ver elaboration-log.md) |
 | Questions answered | 0 |
 | Decisions recorded | 6 supuestos |
-| Units generated | 7 |
+| Units generated | 8 |
 
 ## Decisions Log
 
@@ -40,4 +40,5 @@
 | 04 | Agente Desarrollador | aidlc/units/04-agente-desarrollador.md | 01, 02 | Pending |
 | 05 | Agente Despliegue e infraestructura | aidlc/units/05-agente-despliegue.md | 01 | Pending |
 | 06 | Orquestador y aprobaciones | aidlc/units/06-orquestador-aprobaciones.md | 01 | Pending |
-| 07 | Integración y presentación | aidlc/units/07-integracion-presentacion.md | 02, 03, 04, 05, 06 | Pending |
+| 07 | Integración y presentación | aidlc/units/07-integracion-presentacion.md | 02, 03, 04, 05, 06, 08 | Pending |
+| 08 | Panel de control | aidlc/units/08-panel-control.md | 01 | In progress (API lista, front pendiente) |

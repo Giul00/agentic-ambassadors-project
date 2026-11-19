@@ -22,7 +22,7 @@
 - Credenciales caducadas o permisos faltantes el día de la presentación: mitigar renovándolas antes y ensayando en la cuenta de despliegue.
 - Dependencia de la red o de Bedrock en vivo: mitigar con el plan B grabado.
 
-**Dependencies:** 02, 03, 04, 05, 06
+**Dependencies:** 02, 03, 04, 05, 06, 08
 
 **Suggested Bolts:**
 
