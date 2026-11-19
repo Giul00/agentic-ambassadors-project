@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import ClassVar, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .conventions import CONFIGURATION_KEYS, SAFE_VALUE
 
@@ -114,6 +114,14 @@ class DeploymentComponent(BaseModel):
     kind: str = Field(min_length=2, pattern=r"^[a-z][a-z0-9_-]*$")
     depends_on: list[str] = Field(default_factory=list)
     configuration: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("depends_on", "configuration", mode="before")
+    @classmethod
+    def _null_is_empty(cls, value, info):
+        # Los modelos de lenguaje a veces envían null en campos opcionales.
+        if value is None:
+            return [] if info.field_name == "depends_on" else {}
+        return value
 
     @model_validator(mode="after")
     def _configuration_follows_convention(self) -> "DeploymentComponent":

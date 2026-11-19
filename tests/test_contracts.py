@@ -99,6 +99,13 @@ def test_configuration_rejects_unsafe_values(value):
         DeploymentComponent(name="tabla", kind="dynamodb", configuration={"partition_key": value})
 
 
+def test_component_null_fields_are_normalized():
+    from delivery_crew.contracts import DeploymentComponent
+
+    c = DeploymentComponent(name="tabla", kind="dynamodb", depends_on=None, configuration=None)
+    assert c.depends_on == [] and c.configuration == {}
+
+
 def test_configuration_of_other_kinds_is_not_restricted_by_keys():
     from delivery_crew.contracts import DeploymentComponent
 
