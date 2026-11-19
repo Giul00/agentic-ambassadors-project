@@ -87,7 +87,7 @@ def test_configuration_rejects_unknown_key_for_known_kind():
 
     with pytest.raises(ValueError, match="configuración no reconocida para dynamodb"):
         DeploymentComponent(name="tabla", kind="dynamodb", configuration={"partition": "pk"})
-    with pytest.raises(ValueError, match="FREQUENCY_STORE"):
+    with pytest.raises(ValueError, match="STORAGE_BACKEND"):
         DeploymentComponent(name="fn", kind="lambda", configuration={"OTRA_VAR": "x"})
 
 
@@ -116,4 +116,4 @@ def test_example_design_declares_agreed_configuration():
     spec = examples.design().deployment_spec
     config = {c.kind: c.configuration for c in spec.components}
     assert config["dynamodb"] == {"partition_key": "pk", "ttl_attribute": "ttl"}
-    assert config["lambda"] == {"FREQUENCY_STORE": "dynamodb"}
+    assert config["lambda"] == {"STORAGE_BACKEND": "dynamodb"}

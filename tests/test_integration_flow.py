@@ -16,7 +16,7 @@ from delivery_crew import examples
 from delivery_crew.agents.deployment import create_plan, parameter_overrides
 from delivery_crew.agents.developer import run_developer, seed_run
 from delivery_crew.contracts import Change, DeployableArtifact, DeploymentComponent, Design
-from delivery_crew.conventions import LAMBDA_ENTRYPOINT, SERVICE_DIR
+from delivery_crew.conventions import LAMBDA_ENTRYPOINT, SERVICE_DIR, available_services, build_command, lambda_entrypoint, service_dir
 from delivery_crew.runs import RunStore
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,12 +80,13 @@ def test_developer_output_is_accepted_by_deployment_agent(repo, tmp_path):
     # El agente Desarrollador declara el entregable a partir del deployment_spec.
     assert [d.model_dump() for d in change.deliverables] == [{
         "component": "auth-handler", "kind": "zip", "source_path": SERVICE_DIR,
-        "build_command": "python -m zipfile -c auth-service.zip auth_service", "entrypoint": LAMBDA_ENTRYPOINT,
+        "build_command": build_command("auth-service"), "entrypoint": LAMBDA_ENTRYPOINT,
     }]
     # Y recibió la configuración de Arquitectura como requisito.
     prompt = captured["agent"].prompt
     assert "Especificación de despliegue" in prompt
-    assert "'pk'" in prompt and "'ttl'" in prompt and "FREQUENCY_STORE=dynamodb" in prompt
+    assert "'pk'" in prompt and "'ttl'" in prompt and "STORAGE_BACKEND=dynamodb" in prompt
+    assert "TABLE_NAME" in prompt
 
     store.decide(Change, "aprobado", by="tomas")
     deployment = create_plan("e2e", "123456789012", base_dir=str(runs))
@@ -93,15 +94,17 @@ def test_developer_output_is_accepted_by_deployment_agent(repo, tmp_path):
     assert deployment.approval.status == "pendiente"
     manifest = yaml.safe_load((store.path / "generated" / "manifest.yml").read_text(encoding="utf-8"))
     assert manifest["parameter_overrides"] == {
-        "FrequencyPartitionKey": "pk",
-        "FrequencyTtlAttribute": "ttl",
-        "FrequencyStore": "dynamodb",
+        "TablePartitionKey": "pk",
+        "TableTtlAttribute": "ttl",
+        "StorageBackend": "dynamodb",
         "LambdaHandler": LAMBDA_ENTRYPOINT,
     }
     pipeline = (store.path / "generated" / ".gitlab-ci-sysops.yml").read_text(encoding="utf-8")
-    assert ('CF_EXTRA_PARAMETER_OVERRIDES: "FrequencyPartitionKey=pk FrequencyStore=dynamodb '
-            'FrequencyTtlAttribute=ttl LambdaHandler=auth_service.handler.lambda_handler"') in pipeline
-    assert "FrequencyPartitionKey=pk" in deployment.body
+    assert ('CF_EXTRA_PARAMETER_OVERRIDES: "LambdaHandler=auth_service.handler.lambda_handler '
+            'StorageBackend=dynamodb TablePartitionKey=pk TableTtlAttribute=ttl"') in pipeline
+    assert "SERVICE_DIR: services/auth_service" in pipeline and "SERVICE_PACKAGE: auth_service" in pipeline
+    assert "TablePartitionKey=pk" in deployment.body
+    assert deployment.stack_name == "dc-auth-service-qa" and deployment.project_name == "dc-auth-service"
 
 
 # --- Arquitecto -> Desarrollo -> Despliegue ------------------------------------
@@ -142,8 +145,8 @@ def test_full_chain_carries_architect_names_to_code_prompt_and_template(repo, tm
     store.decide(Change, "aprobado", by="tomas")
     create_plan("cadena", "123456789012", base_dir=str(runs))
     manifest = yaml.safe_load((store.path / "generated" / "manifest.yml").read_text(encoding="utf-8"))
-    assert manifest["parameter_overrides"]["FrequencyPartitionKey"] == "token_window"
-    assert manifest["parameter_overrides"]["FrequencyTtlAttribute"] == "expira"
+    assert manifest["parameter_overrides"]["TablePartitionKey"] == "token_window"
+    assert manifest["parameter_overrides"]["TableTtlAttribute"] == "expira"
 
     actors = [e["actor"] for e in store.read_audit() if e["action"] == "artifact_written"]
     assert actors[:4] == ["orquestador", "agente-arquitecto", "arquitecto", "agente-desarrollador"]
@@ -161,40 +164,49 @@ def test_every_override_is_a_template_parameter():
 
 def test_template_defaults_match_the_agreed_convention():
     params = load_template()["Parameters"]
-    assert params["FrequencyPartitionKey"]["Default"] == "pk"
-    assert params["FrequencyTtlAttribute"]["Default"] == "ttl"
-    assert params["FrequencyStore"]["Default"] == "dynamodb"
-    assert params["LambdaHandler"]["Default"] == LAMBDA_ENTRYPOINT
+    assert params["TablePartitionKey"]["Default"] == "pk"
+    assert params["TableTtlAttribute"]["Default"] == ""  # sin TTL salvo que el diseño lo pida
+    assert params["StorageBackend"]["Default"] == "dynamodb"
+    assert "Default" not in params["LambdaHandler"]  # siempre viene del entregable
 
 
 def test_template_wires_parameters_into_resources():
     resources = load_template()["Resources"]
-    table = resources["FrequencyTable"]["Properties"]
-    assert table["KeySchema"][0]["AttributeName"] == "FrequencyPartitionKey"
-    assert table["AttributeDefinitions"][0]["AttributeName"] == "FrequencyPartitionKey"
-    assert table["TimeToLiveSpecification"]["AttributeName"] == "FrequencyTtlAttribute"
+    table = resources["Table"]["Properties"]
+    assert table["KeySchema"][0]["AttributeName"] == "TablePartitionKey"
+    assert table["AttributeDefinitions"][0]["AttributeName"] == "TablePartitionKey"
+    assert "TableTtlAttribute" in str(table["TimeToLiveSpecification"])  # condicional (HasTtl)
     env = resources["Function"]["Properties"]["Environment"]["Variables"]
-    assert env["FREQUENCY_STORE"] == "FrequencyStore"
-    assert env["FREQUENCY_TABLE_NAME"] == "FrequencyTable"
+    assert env["STORAGE_BACKEND"] == "StorageBackend"
+    assert env["TABLE_NAME"] == "Table"
+    assert resources["ProxyResource"]["Properties"]["PathPart"] == "{proxy+}"
+    assert "Tags" not in resources["Api"]["Properties"]  # el rol del workshop no puede etiquetar API Gateway
     assert resources["Function"]["Properties"]["Handler"] == "LambdaHandler"
 
 
 def test_lambda_role_allows_update_item():
     statements = load_template()["Resources"]["FunctionRole"]["Properties"]["Policies"][0]["PolicyDocument"]["Statement"]
     actions = {a for s in statements for a in s["Action"]}
-    assert "dynamodb:UpdateItem" in actions
+    assert {"dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem",
+            "dynamodb:Scan"} <= actions
+    assert all("*" not in a for a in actions)
 
 
-def test_handler_entrypoint_exists_in_service():
-    module, func = LAMBDA_ENTRYPOINT.rsplit(".", 1)
-    path = ROOT / SERVICE_DIR / (module.replace(".", "/") + ".py")
+@pytest.mark.parametrize("service", ["auth-service", "merchants-api"])
+def test_handler_entrypoint_exists_in_service(service):
+    module, func = lambda_entrypoint(service).rsplit(".", 1)
+    path = ROOT / service_dir(service) / (module.replace(".", "/") + ".py")
     assert path.is_file()
     assert f"def {func}(" in path.read_text(encoding="utf-8")
 
 
+def test_available_services():
+    assert {"auth-service", "merchants-api"} <= set(available_services(ROOT))
+
+
 def test_pipeline_packages_the_real_service():
     text = PIPELINE.read_text(encoding="utf-8")
-    assert "cd services/auth_service" in text and "src/auth_service" not in text
+    assert 'cd "$SERVICE_DIR"' in text and "src/auth_service" not in text
     assert text.count("$CF_EXTRA_PARAMETER_OVERRIDES") == 3
 
 
@@ -229,7 +241,7 @@ def test_deployment_rejects_conflicting_values():
     design = examples.design()
     design.deployment_spec.components.append(
         DeploymentComponent(name="otra-tabla", kind="dynamodb", configuration={"partition_key": "id"}))
-    with pytest.raises(ValueError, match="valores en conflicto para FrequencyPartitionKey"):
+    with pytest.raises(ValueError, match="valores en conflicto para TablePartitionKey"):
         parameter_overrides(design, examples.change())
 
 

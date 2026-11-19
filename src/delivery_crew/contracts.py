@@ -222,6 +222,14 @@ class Deployment(Artifact):
     rollback_plan: str = Field(min_length=10)
     health_check: Literal["pendiente", "ok", "fallo"] = "pendiente"
     rolled_back: bool = False
+    # Ejecución real (los completa el ejecutor de despliegue tras la aprobación de SysOps).
+    stack_name: str | None = Field(default=None, pattern=r"^[A-Za-z][A-Za-z0-9-]{0,127}$")
+    project_name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]{2,30}$")
+    environment: str | None = None
+    endpoint_url: str | None = Field(default=None, pattern=r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/-]*)?$")
+    deployed_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,40}$")
+    deployment_status: Literal["no_ejecutado", "en_curso", "desplegado", "fallido"] = "no_ejecutado"
+    deployment_log: list[str] = Field(default_factory=list)
 
 
 ARTIFACTS: tuple[type[Artifact], ...] = (Requirement, Design, Change, Deployment)

@@ -21,3 +21,5 @@ sí conviene avisar si afecta un diseño ya aprobado.
 | ARQ-05 | Trazabilidad del diseño | `05-trazabilidad.md` |
 | ARQ-06 | Infraestructura parametrizada | `06-infraestructura-parametrizada.md` |
 | ARQ-07 | Aprobación humana bloqueante | `07-aprobacion-humana.md` |
+| ARQ-08 | Persistencia de servicios en DynamoDB (lineamiento de plataforma) | `08-persistencia-dynamodb.md` |
+| ARQ-09 | APIs con API Gateway y Lambda (lineamiento de plataforma) | `09-apis-serverless.md` |

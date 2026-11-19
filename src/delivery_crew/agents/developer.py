@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..contracts import Change, DeployableArtifact, Design, Requirement
-from ..conventions import FREQUENCY_TABLE_ENV, LAMBDA_BUILD_COMMAND, LAMBDA_ENTRYPOINT, SERVICE_DIR
+from ..conventions import TABLE_ENV, build_command, lambda_entrypoint, service_dir
 from ..runs import NotApprovedError, RunStore
 from .narration import Narrator
 from .sandbox import Sandbox, SandboxError, TestRun
@@ -41,29 +41,32 @@ class DeveloperError(RuntimeError):
 
 SYSTEM_PROMPT = textwrap.dedent("""
     Eres el agente Desarrollador de Delivery Crew, en una empresa de adquirencia de pagos.
-    Implementas cambios en el servicio auth-service siguiendo un diseño ya aprobado por el arquitecto.
+    Implementas cambios en un servicio siguiendo un diseño ya aprobado por el arquitecto.
 
     Herramientas: list_files, read_file, write_file y run_tests. Las rutas son relativas a la
-    carpeta del servicio (por ejemplo, "auth_service/rules.py" o "tests/test_auth_rules.py").
+    carpeta del servicio (por ejemplo, "<paquete>/handler.py" o "tests/test_nuevo.py").
 
     Reglas obligatorias:
-    1. Antes de escribir, lee los archivos relevantes (al menos README.md, auth_service/rules.py,
-       auth_service/models.py, auth_service/handler.py y las pruebas existentes).
+    1. Antes de escribir, usa list_files y lee los archivos relevantes: al menos README.md, todos los
+       módulos del paquete y las pruebas existentes.
     2. Implementa solo lo que pide el diseño y el requerimiento. No cambies el comportamiento existente
        que no esté relacionado.
     3. Escribe al menos una prueba por cada criterio de aceptación, más los casos borde.
     4. Las pruebas no pueden usar AWS ni red. Si el diseño usa un servicio de AWS (por ejemplo DynamoDB),
        define una interfaz, una implementación en memoria para pruebas y otra con boto3 para producción,
-       y elige la implementación por variable de entorno. Importa boto3 solo dentro de la implementación real.
+       y elige la implementación por variable de entorno. Importa boto3 solo dentro de la implementación real
+       (boto3 ya viene en el runtime de Lambda: no agregues dependencias ni archivos requirements).
+       Si el servicio ya tiene puertos y adaptadores, agrega el adaptador nuevo detrás del puerto existente,
+       regístralo donde se eligen los adaptadores y no cambies el dominio ni los casos de uso.
        La implementación real también se prueba: con un cliente o tabla falsos en memoria que simulen las
        operaciones que usas (incluidas las condiciones), sin red.
     5. Nada de datos reales de tarjetas ni secretos en el código.
     6. write_file reemplaza el archivo completo: escribe siempre el contenido entero.
     7. Ejecuta run_tests y corrige hasta que todas las pruebas pasen. Las pruebas existentes no se pueden
        modificar: fijan el comportamiento actual. Si tu cambio rompe una, corrige el código.
-    8. No cambies el contrato HTTP del servicio salvo que el requerimiento lo pida: un rechazo de negocio
-       (cualquier response_code distinto de 00) responde HTTP 200 con approved=false. Tampoco cambies
-       mensajes ni códigos existentes.
+    8. No cambies el contrato HTTP del servicio (rutas, códigos de estado, formato de las respuestas,
+       mensajes) salvo que el requerimiento lo pida. En auth-service, un rechazo de negocio (cualquier
+       response_code distinto de 00) responde HTTP 200 con approved=false.
     9. Si implementas una ventana de tiempo, pruébala con un reloj simulado en ambas implementaciones,
        incluido el caso de solicitudes espaciadas por debajo del límite, que nunca deben rechazarse aunque
        se sostengan en el tiempo. Renovar el vencimiento en cada solicitud convierte la ventana en un
@@ -108,8 +111,8 @@ def create_worktree(repo: Path, run_id: str, fresh: bool = False, base: str = "H
     return path, branch
 
 
-def stage_and_diff(worktree: Path) -> tuple[list[str], str]:
-    _git(worktree, "add", "-A", "--", SERVICE_DIR)
+def stage_and_diff(worktree: Path, service_path: str) -> tuple[list[str], str]:
+    _git(worktree, "add", "-A", "--", service_path)
     names = [n for n in _git(worktree, "diff", "--cached", "--name-only").splitlines() if n.strip()]
     diff = _git(worktree, "diff", "--cached", "--stat") + "\n" + _git(worktree, "diff", "--cached")
     return names, diff
@@ -117,7 +120,7 @@ def stage_and_diff(worktree: Path) -> tuple[list[str], str]:
 
 # --- prompt ----------------------------------------------------------------
 
-def deployment_section(design: Design) -> str:
+def deployment_section(design: Design, service: str) -> str:
     """Restricciones de infraestructura que el código debe respetar al pie de la letra."""
     spec = design.deployment_spec
     if spec is None:
@@ -137,22 +140,22 @@ def deployment_section(design: Design) -> str:
             if "ttl_attribute" in comp.configuration:
                 lines.append(f"  - El atributo TTL se llama exactamente '{comp.configuration['ttl_attribute']}' "
                              "(Number, epoch en segundos).")
-            lines.append(f"  - El nombre de la tabla llega en la variable de entorno {FREQUENCY_TABLE_ENV}.")
-            lines.append("  - El rol de la Lambda tiene permiso de dynamodb:GetItem, PutItem y UpdateItem.")
+            lines.append(f"  - El nombre de la tabla llega en la variable de entorno {TABLE_ENV}.")
+            lines.append("  - El rol de la Lambda tiene permiso de dynamodb:GetItem, PutItem, UpdateItem, DeleteItem, Query y Scan sobre esa tabla.")
         if comp.kind == "lambda":
             for key, value in sorted(comp.configuration.items()):
                 lines.append(f"  - La Lambda recibe la variable de entorno {key}={value}.")
-            lines.append(f"  - Handler: {LAMBDA_ENTRYPOINT}.")
+            lines.append(f"  - Handler: {lambda_entrypoint(service)}.")
     return "\n".join(lines)
 
 
-def build_deliverables(design: Design) -> list[DeployableArtifact]:
+def build_deliverables(design: Design, service: str = "auth-service") -> list[DeployableArtifact]:
     """Un zip del servicio por cada componente Lambda del diseño. Valores fijos, no del modelo."""
     if design.deployment_spec is None:
         return []
     return [
-        DeployableArtifact(component=comp.name, kind="zip", source_path=SERVICE_DIR,
-                           build_command=LAMBDA_BUILD_COMMAND, entrypoint=LAMBDA_ENTRYPOINT)
+        DeployableArtifact(component=comp.name, kind="zip", source_path=service_dir(service),
+                           build_command=build_command(service), entrypoint=lambda_entrypoint(service))
         for comp in design.deployment_spec.components if comp.kind == "lambda"
     ]
 
@@ -188,7 +191,7 @@ def build_prompt(req: Requirement, design: Design, feedback: str | None = None) 
 
         {design.body}
     """).strip()
-    infra = deployment_section(design)
+    infra = deployment_section(design, req.affected_service)
     if infra:
         prompt += "\n\n" + infra
     return prompt + review
@@ -234,7 +237,7 @@ def strands_agent_factory(sandbox: Sandbox) -> AgentFn:
         """Crea o reemplaza por completo un archivo del servicio.
 
         Args:
-            path: ruta relativa a la carpeta del servicio, por ejemplo auth_service/frequency.py
+            path: ruta relativa a la carpeta del servicio, por ejemplo mi_paquete/adapters/nuevo.py
             content: contenido completo del archivo
         """
         return guard(lambda: f"escrito: {sandbox.write_file(path, content)}")
@@ -291,7 +294,10 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
         elif action == "tool_run_tests":
             log(f"  pruebas: {details['summary']}")
 
-    sandbox = Sandbox(worktree, SERVICE_DIR, on_event=on_event)
+    service_path = service_dir(req.affected_service)
+    if not (worktree / service_path).is_dir():
+        raise DeveloperError(f"no existe el código del servicio {req.affected_service!r} en {service_path}")
+    sandbox = Sandbox(worktree, service_path, on_event=on_event)
     agent = agent_factory(sandbox)
 
     prompt = build_prompt(req, design, feedback)
@@ -308,7 +314,7 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
             break
         prompt = retry_prompt(result)
 
-    files, diff = stage_and_diff(worktree)
+    files, diff = stage_and_diff(worktree, service_path)
     if not files:
         store.audit(ACTOR, "developer_failed", reason="el agente no modificó archivos")
         raise DeveloperError("el agente no modificó ningún archivo")
@@ -334,7 +340,7 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
         files_modified=files,
         test_result="passed" if result.passed else "failed",
         test_summary=result.summary,
-        deliverables=build_deliverables(design),
+        deliverables=build_deliverables(design, req.affected_service),
         body=body,
     )
     store.write(change, actor=ACTOR)

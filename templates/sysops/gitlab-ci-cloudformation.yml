@@ -13,7 +13,10 @@ variables:
   AWS_DEFAULT_REGION: us-west-2
   CF_TEMPLATE: templates/generated/stack.yml
   CF_STACK_NAME: $CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG
-  ARTIFACT_KEY: $CI_PROJECT_NAME/$CI_COMMIT_SHA/auth-service.zip
+  # Servicio a empaquetar: lo completa el agente Despliegue desde los deliverables.
+  SERVICE_DIR: services/auth_service
+  SERVICE_PACKAGE: auth_service
+  ARTIFACT_KEY: $CI_PROJECT_NAME/$CI_COMMIT_SHA/$SERVICE_PACKAGE.zip
   # Lo completa el agente Despliegue desde el deployment_spec aprobado (no editar a mano).
   CF_EXTRA_PARAMETER_OVERRIDES: ""
 
@@ -42,8 +45,8 @@ package_lambda:
   stage: build
   script:
     - test -n "$ARTIFACT_BUCKET"
-    - cd services/auth_service && python3 -m zipfile -c ../../auth-service.zip auth_service && cd ../..
-    - aws s3 cp auth-service.zip "s3://$ARTIFACT_BUCKET/$ARTIFACT_KEY"
+    - cd "$SERVICE_DIR" && python3 -m zipfile -c "../../$SERVICE_PACKAGE.zip" "$SERVICE_PACKAGE" && cd ../..
+    - aws s3 cp "$SERVICE_PACKAGE.zip" "s3://$ARTIFACT_BUCKET/$ARTIFACT_KEY"
     - >-
       echo "CF_PARAMETER_OVERRIDES=ProjectName=$CI_PROJECT_NAME Environment=$DEPLOY_ENV
       ArtifactBucket=$ARTIFACT_BUCKET ArtifactKey=$ARTIFACT_KEY" > build.env
