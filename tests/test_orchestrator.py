@@ -82,12 +82,29 @@ def test_waits_for_approval_without_rerunning_agents(store):
 
 
 def test_waiting_is_audited_once_per_stage(store):
+    """Mientras espera, relee varias veces pero audita la espera una sola vez (sin depender del reloj)."""
+
+    class Stop(Exception):
+        pass
+
     sleeps = []
-    orch.run(store, FakeAgents().agents(), wait=True, poll_seconds=0, timeout_seconds=0.05,
-             log=quiet, sleep=lambda s: sleeps.append(s))
+
+    def fake_sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 3:
+            raise Stop
+
+    with pytest.raises(Stop):
+        orch.run(store, FakeAgents().agents(), wait=True, poll_seconds=0.5, log=quiet, sleep=fake_sleep)
     waits = [e for e in store.read_audit() if e["action"] == "waiting_approval"]
     assert len(waits) == 1 and waits[0]["step"] == 2
-    assert sleeps  # esperó leyendo de nuevo
+    assert sleeps == [0.5, 0.5, 0.5]
+
+
+def test_wait_timeout_returns_waiting(store):
+    result = orch.run(store, FakeAgents().agents(), wait=True, poll_seconds=0, timeout_seconds=0, log=quiet,
+                      sleep=lambda s: None)
+    assert (result.outcome, result.step) == (orch.WAITING, 2)
 
 
 def test_approval_from_panel_while_waiting(store):

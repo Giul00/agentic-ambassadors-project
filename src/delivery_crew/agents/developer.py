@@ -22,6 +22,7 @@ from typing import Callable
 from ..contracts import Change, DeployableArtifact, Design, Requirement
 from ..conventions import FREQUENCY_TABLE_ENV, LAMBDA_BUILD_COMMAND, LAMBDA_ENTRYPOINT, SERVICE_DIR
 from ..runs import NotApprovedError, RunStore
+from .narration import Narrator
 from .sandbox import Sandbox, SandboxError, TestRun
 
 ACTOR = "agente-desarrollador"
@@ -245,14 +246,22 @@ def strands_agent_factory(sandbox: Sandbox) -> AgentFn:
         status = "PASAN" if result.passed else "FALLAN"
         return f"{status}: {result.summary}\n\n{result.output[-4000:]}"
 
+    narrator = Narrator(lambda text: sandbox.emit("agent_message", {"text": text}))
     agent = Agent(
         model=get_strands_model(max_tokens=16000, temperature=0.2),
         tools=[list_files, read_file, write_file, run_tests],
         system_prompt=SYSTEM_PROMPT,
-        callback_handler=None,
+        callback_handler=narrator,
         name="agente-desarrollador",
     )
-    return lambda prompt: str(agent(prompt)).strip()
+
+    def run(prompt: str) -> str:
+        try:
+            return str(agent(prompt)).strip()
+        finally:
+            narrator.flush()
+
+    return run
 
 
 # --- flujo -----------------------------------------------------------------

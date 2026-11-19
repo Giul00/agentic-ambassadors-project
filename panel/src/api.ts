@@ -1,4 +1,4 @@
-import type { AuditEntry, RunDetail, RunSummary } from "./types";
+import type { AuditEntry, Config, NewRun, RunDetail, RunSummary } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -7,7 +7,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     try {
       const body = await res.json();
       if (typeof body.detail === "string") detail = body.detail;
-      else if (Array.isArray(body.detail)) detail = body.detail.map((d: { msg: string }) => d.msg).join("; ");
+      else if (Array.isArray(body.detail))
+        detail = body.detail.map((d: { msg?: string } | string) => (typeof d === "string" ? d : d.msg)).join("; ");
     } catch {
       /* se deja el mensaje por defecto */
     }
@@ -16,14 +17,20 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+const json = (body: unknown): RequestInit => ({
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(body),
+});
+
 export const api = {
+  config: () => request<Config>("/api/config"),
   runs: () => request<RunSummary[]>("/api/runs"),
   run: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),
   audit: (id: string) => request<AuditEntry[]>(`/api/runs/${encodeURIComponent(id)}/audit`),
+  createRun: (body: NewRun) => request<RunDetail>("/api/runs", json(body)),
+  resume: (id: string, retryRejected: boolean) =>
+    request<RunDetail>(`/api/runs/${encodeURIComponent(id)}/resume`, json({ retry_rejected: retryRejected })),
   decide: (id: string, step: number, body: { status: "aprobado" | "rechazado"; by: string; reason?: string }) =>
-    request<RunDetail>(`/api/runs/${encodeURIComponent(id)}/stages/${step}/decision`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }),
+    request<RunDetail>(`/api/runs/${encodeURIComponent(id)}/stages/${step}/decision`, json(body)),
 };

@@ -28,6 +28,7 @@ from ..bedrock import get_strands_model
 from ..contracts import DeploymentSpec, Design, Requirement, Verdict
 from ..conventions import CONFIGURATION_KEYS
 from ..runs import RunStore
+from .narration import Narrator
 
 ACTOR = "agente-arquitecto"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -219,6 +220,9 @@ diseño técnico evaluado contra la base de estándares del equipo.
 4. Nunca propongas guardar PAN, CVV ni datos reales de tarjetas, ni \
    saltar la aprobación humana de ningún paso del flujo.
 
+Idioma: razona y escribe siempre en español. Tu razonamiento se muestra \
+en vivo al equipo y queda en la auditoría.
+
 {deployment_rules}
 """
 
@@ -289,14 +293,19 @@ Produce tu respuesta estructurada según las reglas del sistema.
 """
 
 
-def _invoke_agent(prompt: str, *, fast: bool = False) -> DesignProposal:
+def _invoke_agent(prompt: str, *, fast: bool = False,
+                  narrator: Callable[..., None] | None = None) -> DesignProposal:
     """Única función que toca Bedrock. Inyectable vía el parámetro
     `agent_fn` de `generate_design` para pruebas sin red."""
+    kwargs = {"callback_handler": narrator} if narrator is not None else {}
     agent = Agent(
         model=get_strands_model(fast=fast),
         system_prompt=SYSTEM_PROMPT_TEMPLATE.format(standards=load_standards(), deployment_rules=deployment_rules()),
+        **kwargs,
     )
     result = agent(prompt, structured_output_model=DesignProposal)
+    if narrator is not None and hasattr(narrator, "flush"):
+        narrator.flush()
     if result.structured_output is None:
         raise RuntimeError("El modelo no devolvió una respuesta estructurada válida")
     return result.structured_output
@@ -328,6 +337,7 @@ def generate_design(
     base_dir: str | Path = "runs",
     agent_fn: AgentFn | None = None,
     actor: str = ACTOR,
+    echo: Callable[[str], None] | None = None,
 ) -> Path:
     """Flujo completo de la Unit 03: lee el requerimiento aprobado, invoca al
     agente Arquitecto (o `agent_fn` en pruebas) y escribe `02-diseno.md`.
@@ -340,7 +350,14 @@ def generate_design(
     requirement = store.read_input_for(2, Requirement)
 
     prompt = _build_prompt(requirement)
-    invoke = agent_fn or _invoke_agent
+    if agent_fn is None:
+        # Lo que el modelo va razonando queda en la auditoría (el panel lo muestra en vivo).
+        narrator = Narrator(lambda text: store.audit(actor, "agent_message", text=text), echo=echo)
+        invoke: AgentFn = lambda p: _invoke_agent(p, narrator=narrator)  # noqa: E731
+    else:
+        invoke = agent_fn
+    store.audit(actor, "agent_message", text="Evaluando el requerimiento contra los estándares "
+                + ", ".join(sorted(known_standard_ids())) + ".")
     proposal = invoke(prompt)
 
     design = _build_design(requirement, proposal)
@@ -371,7 +388,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.seed:
         seed_run(store)
 
-    path = generate_design(args.run_id, args.runs_dir)
+    path = generate_design(args.run_id, args.runs_dir, echo=lambda s: print(s, end="", flush=True))
     print(f"Diseño escrito en: {path} (pendiente de aprobación)")
     return 0
 

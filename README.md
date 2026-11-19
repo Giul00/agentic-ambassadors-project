@@ -29,13 +29,13 @@ python -m delivery_crew.check_env
 python -m delivery_crew.check_env --expect-account 123456789012   # antes de desplegar
 ```
 
-## Demo de punta a punta
-Con credenciales AWS en el entorno y el panel levantado:
-```powershell
-.\.venv\Scripts\python.exe -m delivery_crew.orchestrator start --run-id demo-vivo --example --by tomas --target-account 123456789012
-```
-El flujo se ve en el panel y se aprueba desde ahí. Detalle en `docs/orquestador.md`.
+## Demo en vivo
+Todo corre local; los agentes usan Bedrock. Guía paso a paso, guion y qué hacer si algo falla: `docs/demo-en-vivo.md`.
 
+```powershell
+.\.venv\Scripts\python.exe -m delivery_crew.api      # terminal 1 (con credenciales AWS)
+cd panel; npm run dev                               # terminal 2: http://127.0.0.1:5173
+```
 ## Documentación
 - `docs/arquitectura.md`: diagramas y decisiones iniciales.
 - `docs/caso-demo.md`: caso demo, guion y plan B.

@@ -53,6 +53,10 @@ class Sandbox:
 
     # --- rutas -------------------------------------------------------------
 
+    def emit(self, action: str, details: dict) -> None:
+        """Publica un evento (por ejemplo, lo que el agente está razonando)."""
+        self._on_event(action, details)
+
     def resolve(self, rel_path: str) -> Path:
         """Convierte una ruta relativa a la carpeta del servicio en absoluta, o falla."""
         if not isinstance(rel_path, str) or not rel_path.strip():
