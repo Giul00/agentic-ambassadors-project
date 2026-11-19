@@ -36,8 +36,8 @@ No incluye: sistemas productivos reales, datos reales de tarjetas, múltiples re
 4. El agente Despliegue prepara el cambio. Aprueba sysops.
 5. Despliegue, verificación y reporte. Si falla, rollback.
 
-## Caso demo (propuesto, ver docs/caso-demo.md)
-Agregar el código de rechazo 65 (límite de frecuencia: más de 3 solicitudes en 60 segundos por card_token) a uth-service, un servicio sintético de autorizaciones. Detalle, guion y plan B en docs/caso-demo.md.
+## Caso demo (propuesto, ver `docs/caso-demo.md`)
+Agregar el código de rechazo 65 (límite de frecuencia: más de 3 solicitudes en 60 segundos por `card_token`) a `auth-service`, un servicio sintético de autorizaciones. Detalle, guion y plan B en `docs/caso-demo.md`.
 
 ## Métricas de éxito
 - Tiempo de la demo contra un estimado manual del mismo cambio.
@@ -48,12 +48,12 @@ Agregar el código de rechazo 65 (límite de frecuencia: más de 3 solicitudes e
 ## Decisiones pendientes
 1. Plazo y fecha de entrega.
 2. Criterios de evaluación del hackathon.
-3. ~~Servicio de ejemplo para la demo~~ Propuesto: uth-service. Falta que el equipo lo confirme.
+3. ~~Servicio de ejemplo para la demo~~ Propuesto: `auth-service`. Falta que el equipo lo confirme.
 4. Modelos de Bedrock: resuelto, ver tech.md (falta repetir la verificación en las otras dos cuentas).
 5. ~~Cuenta AWS de despliegue~~ Resuelto: la cuenta del arquitecto de soluciones. Falta confirmar su ID y que tenga Bedrock habilitado.
 
 ## Documentos relacionados
-- Arquitectura y diagramas: docs/arquitectura.md.
-- Caso demo y guion: docs/caso-demo.md.
-- Plan de trabajo y unidades: idlc/plan.md y idlc/units/.
-- Supuestos pendientes de confirmar: idlc/elaboration-log.md.
+- Arquitectura y diagramas: `docs/arquitectura.md`.
+- Caso demo y guion: `docs/caso-demo.md`.
+- Plan de trabajo y unidades: `aidlc/plan.md` y `aidlc/units/`.
+- Supuestos pendientes de confirmar: `aidlc/elaboration-log.md`.
