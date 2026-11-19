@@ -9,8 +9,8 @@ approval:
 branch: feature/codigo-65-frecuencia
 pull_request_url: https://github.com/Giul00/agentic-ambassadors-project/pull/1
 files_modified:
-- src/delivery_crew/auth_service/rules.py
-- tests/test_auth_rules.py
+- services/auth_service/auth_service/rules.py
+- services/auth_service/tests/test_auth_rules.py
 test_result: passed
 test_summary: 12 pruebas, 12 correctas.
 ---
