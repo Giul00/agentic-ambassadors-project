@@ -30,3 +30,6 @@ runs/
 build/
 dist/
 .pytest_cache/
+
+# Copias de trabajo de los agentes
+.worktrees/
