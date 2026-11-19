@@ -311,6 +311,9 @@ def _report(result: StepResult, store: RunStore) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .dotenv import load_and_report
+
+    load_and_report()
     parser = argparse.ArgumentParser(description="Orquestador de Delivery Crew")
     sub = parser.add_subparsers(dest="command", required=True)
 

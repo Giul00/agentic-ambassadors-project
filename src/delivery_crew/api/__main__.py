@@ -22,6 +22,9 @@ def _active_account() -> str | None:
 
 
 def main() -> None:
+    from ..dotenv import load_and_report
+
+    load_and_report()  # .env antes de leer cualquier variable (AWS, GitHub, despliegue)
     parser = argparse.ArgumentParser(description="API del panel de Delivery Crew")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
@@ -35,6 +38,7 @@ def main() -> None:
 
     if args.deploy:
         os.environ["DELIVERY_CREW_DEPLOY"] = "1"
+    if os.environ.get("DELIVERY_CREW_DEPLOY", "").lower() in ("1", "true", "si", "sí"):
         print("Despliegue real ACTIVADO: al aprobar el plan se crea el stack en AWS.")
     else:
         print("Despliegue real desactivado: el flujo termina en el plan aprobado (use --deploy para activarlo).")

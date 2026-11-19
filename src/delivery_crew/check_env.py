@@ -15,6 +15,9 @@ from . import bedrock
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .dotenv import load_and_report
+
+    load_and_report()
     parser = argparse.ArgumentParser(description="Comprobación de entorno de Delivery Crew")
     parser.add_argument("--expect-account", help="ID de cuenta esperado (12 dígitos)")
     parser.add_argument("--skip-model", action="store_true", help="no llamar a Bedrock")
