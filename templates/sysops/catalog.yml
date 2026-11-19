@@ -1,0 +1,36 @@
+version: 1
+source_reviewed_at: '2026-11-19'
+pipeline:
+  template: gitlab-ci-cloudformation.yml
+  stages:
+    - test
+    - versionador
+    - build
+    - deploy
+    - deploy_QA
+    - deploy_UAT
+    - deploy_PROD
+  required_controls:
+    - validacion_de_template
+    - change_set_antes_de_ejecutar
+    - aprobacion_manual_por_ambiente
+    - health_check_post_deploy
+    - rollback_manual_a_version_aprobada
+profiles:
+  lambda_dynamodb:
+    template: cloudformation/lambda-dynamodb.yml
+    required_design_components: [Lambda, DynamoDB]
+    controls: [iam_minimo, ttl, logs, tags]
+  s3:
+    template: cloudformation/s3.yml
+    required_design_components: [S3]
+    controls: [bloqueo_publico, cifrado, versionado, tags]
+  cloudwatch_alarm:
+    template: cloudformation/cloudwatch-alarm.yml
+    required_design_components: [CloudWatch]
+    controls: [metrica, umbral, accion_de_alarma]
+  ecs_fargate:
+    source_pattern: caseexecutor/deploy-ecs-fargate.yml
+    required_design_components: [ECS, ALB]
+    controls: [health_check, logs, roles, security_groups]
+    status: pending_normalized_template

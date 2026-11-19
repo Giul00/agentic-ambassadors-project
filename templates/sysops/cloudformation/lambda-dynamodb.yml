@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda sintética con contador DynamoDB parametrizado por ambiente.
+
+Parameters:
+  ProjectName:
+    Type: String
+    AllowedPattern: '^[a-z][a-z0-9-]{2,30}$'
+  Environment:
+    Type: String
+    AllowedValues: [dev, qa, uat, prod]
+  ArtifactBucket:
+    Type: String
+  ArtifactKey:
+    Type: String
+  LambdaHandler:
+    Type: String
+    Default: handler.lambda_handler
+
+Resources:
+  FrequencyTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: card_token
+          AttributeType: S
+      KeySchema:
+        - AttributeName: card_token
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: project
+          Value: !Ref ProjectName
+        - Key: environment
+          Value: !Ref Environment
+
+  FunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: lambda.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: frequency-table-access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem]
+                Resource: !GetAtt FrequencyTable.Arn
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub '${FunctionLogGroup.Arn}:*'
+
+  FunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${ProjectName}-${Environment}'
+      RetentionInDays: 7
+
+  Function:
+    Type: AWS::Lambda::Function
+    DependsOn: FunctionLogGroup
+    Properties:
+      FunctionName: !Sub '${ProjectName}-${Environment}'
+      Runtime: python3.12
+      Handler: !Ref LambdaHandler
+      Role: !GetAtt FunctionRole.Arn
+      Timeout: 10
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref ArtifactBucket
+        S3Key: !Ref ArtifactKey
+      Environment:
+        Variables:
+          FREQUENCY_TABLE_NAME: !Ref FrequencyTable
+      Tags:
+        - Key: project
+          Value: !Ref ProjectName
+        - Key: environment
+          Value: !Ref Environment
+
+Outputs:
+  FunctionArn:
+    Value: !GetAtt Function.Arn
+  FrequencyTableName:
+    Value: !Ref FrequencyTable

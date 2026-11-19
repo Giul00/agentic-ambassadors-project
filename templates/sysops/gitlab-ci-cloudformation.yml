@@ -1,0 +1,72 @@
+# Modelo GitLab CI basado en la taxonomía corporativa. Configure credenciales como
+# variables masked/protected de GitLab; nunca las agregue a este archivo.
+stages:
+  - test
+  - versionador
+  - build
+  - deploy
+  - deploy_QA
+  - deploy_UAT
+  - deploy_PROD
+
+variables:
+  AWS_DEFAULT_REGION: us-west-2
+  CF_TEMPLATE: templates/generated/stack.yml
+  CF_STACK_NAME: $CI_PROJECT_NAME-$CI_ENVIRONMENT_SLUG
+
+validate_infra:
+  stage: test
+  script:
+    - aws cloudformation validate-template --template-body file://$CF_TEMPLATE
+  rules:
+    - changes:
+        - templates/generated/**/*
+        - infra/**/*
+
+plan_change_set:
+  stage: versionador
+  script:
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME" --template-file "$CF_TEMPLATE"
+      --no-execute-changeset --capabilities CAPABILITY_NAMED_IAM
+  artifacts:
+    when: always
+    expire_in: 7 days
+  needs: [validate_infra]
+
+deploy_qa:
+  stage: deploy_QA
+  environment:
+    name: qa
+  script:
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME" --template-file "$CF_TEMPLATE"
+      --capabilities CAPABILITY_NAMED_IAM
+    - ./scripts/health-check.sh "$HEALTHCHECK_URL"
+  when: manual
+  needs: [plan_change_set]
+
+deploy_prod:
+  stage: deploy_PROD
+  environment:
+    name: production
+  script:
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME" --template-file "$CF_TEMPLATE"
+      --capabilities CAPABILITY_NAMED_IAM
+    - ./scripts/health-check.sh "$HEALTHCHECK_URL"
+  when: manual
+  needs: [plan_change_set]
+
+rollback_prod:
+  stage: deploy_PROD
+  environment:
+    name: production
+  script:
+    - test -n "$PREVIOUS_APPROVED_TEMPLATE"
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME"
+      --template-file "$PREVIOUS_APPROVED_TEMPLATE" --capabilities CAPABILITY_NAMED_IAM
+    - ./scripts/health-check.sh "$HEALTHCHECK_URL"
+  when: manual
+  needs: [deploy_prod]
