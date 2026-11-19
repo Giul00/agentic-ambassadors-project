@@ -35,11 +35,47 @@ export interface Metrics {
   audit_events: number;
 }
 
+export interface RunnerStatus {
+  active: boolean;
+  started_at: string;
+  finished_at: string | null;
+  outcome: "completed" | "waiting_approval" | "rejected" | "blocked" | "invalid" | "failed" | null;
+  step: number | null;
+  reason: string | null;
+}
+
 export interface RunDetail {
   run_id: string;
   state: RunState;
   stages: Stage[];
   metrics: Metrics;
+  runner: RunnerStatus | null;
+}
+
+export interface Config {
+  target_account: string | null;
+  region: string;
+  model_id: string;
+  deploy_enabled: boolean;
+  github_token: boolean;
+  allowed_owners: string[];
+  demo_repo: string;
+}
+
+export interface Service {
+  name: string;
+  summary: string;
+  demo: { title: string; description: string; acceptance_criteria: string[]; affected_service: string } | null;
+}
+
+export interface NewRun {
+  title: string;
+  description: string;
+  acceptance_criteria: string[];
+  affected_service: string;
+  requested_by: string;
+  source_repo?: string;
+  source_ref?: string;
 }
 
 export interface RunSummary {
@@ -56,6 +92,7 @@ export interface AuditEntry {
   action: string;
   artifact?: string;
   reason?: string;
+  [key: string]: unknown;
 }
 
 export interface DeploymentComponent {

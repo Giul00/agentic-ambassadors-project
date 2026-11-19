@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from .api.service import LABELS, load_stages, overall_state
-from .contracts import ARTIFACTS, Change, Design, Requirement
+from .contracts import ARTIFACTS, Change, Deployment, Design, Requirement
 from .runs import RunStore
 
 ACTOR = "orquestador"
@@ -52,6 +52,7 @@ class Agents:
     architect: Callable[[RunStore], None]
     developer: Callable[[RunStore], None]
     deployment: Callable[[RunStore], None]
+    executor: Callable[[RunStore], None] | None = None  # despliegue real tras aprobar el plan
 
     def for_step(self, step: int) -> Callable[[RunStore], None]:
         return {2: self.architect, 3: self.developer, 4: self.deployment}[step]
@@ -64,8 +65,12 @@ class StepResult:
     reason: str | None = None
 
 
+EXECUTION_STEP = 5
+EXECUTION_LABEL = "Ejecución del despliegue"
+
+
 def default_agents(repo: str | Path = ".", target_account: str | None = None, region: str = "us-west-2",
-                   log: Log = print) -> Agents:
+                   log: Log = print, deploy: bool = False) -> Agents:
     """Agentes reales (Bedrock). Se importan al usarlos para no exigir credenciales en pruebas."""
 
     def architect(store: RunStore) -> None:
@@ -82,12 +87,20 @@ def default_agents(repo: str | Path = ".", target_account: str | None = None, re
 
     def deployment(store: RunStore) -> None:
         from .agents.deployment import create_plan
+        from .agents.developer import integrate_change
 
         if not target_account:
             raise ValueError("falta --target-account (cuenta de despliegue de 12 dígitos)")
+        # El cambio ya fue aprobado por una persona: se integra en el repo antes de planificar.
+        integrate_change(store, repo, log=lambda m: log(f"    {m}"))
         create_plan(store.run_id, target_account, region=region, base_dir=str(store.path.parent))
 
-    return Agents(architect, developer, deployment)
+    def executor(store: RunStore) -> None:
+        from .agents.deploy_executor import execute_deployment
+
+        execute_deployment(store, repo)
+
+    return Agents(architect, developer, deployment, executor if deploy else None)
 
 
 # --- un paso -----------------------------------------------------------------
@@ -129,7 +142,30 @@ def step_once(store: RunStore, agents: Agents, retry_rejected: bool = False, log
                 return StepResult(INVALID, 1, "la ejecución no tiene requerimiento; use 'start'")
             return _run_agent(store, agents, step, log)
         return StepResult(INVALID, step, f"estado inesperado: {stage.state}")
+    if agents.executor is not None:
+        status = store.read(Deployment).deployment_status
+        if status in ("no_ejecutado", "en_curso") or (status == "fallido" and retry_rejected):
+            return _run_execution(store, agents, log, retry=status != "no_ejecutado")
+        if status == "fallido":
+            last = store.read(Deployment).deployment_log[-1:] or ["sin detalle"]
+            return StepResult(FAILED, EXECUTION_STEP, f"el despliegue falló: {last[0]}")
     return StepResult(COMPLETED)
+
+
+def _run_execution(store: RunStore, agents: Agents, log: Log, retry: bool) -> StepResult:
+    store.audit(ACTOR, "stage_started", step=EXECUTION_STEP, stage=EXECUTION_LABEL, retry=retry or None)
+    log(f"[5/5] {EXECUTION_LABEL}: desplegando en AWS...")
+    started = time.monotonic()
+    try:
+        agents.executor(store)  # type: ignore[misc]
+    except Exception as exc:  # noqa: BLE001 - se audita y se detiene; se puede reintentar
+        store.audit(ACTOR, "stage_failed", step=EXECUTION_STEP, stage=EXECUTION_LABEL,
+                    error=f"{type(exc).__name__}: {exc}")
+        return StepResult(FAILED, EXECUTION_STEP, f"{type(exc).__name__}: {exc}")
+    seconds = round(time.monotonic() - started, 1)
+    store.audit(ACTOR, "stage_finished", step=EXECUTION_STEP, stage=EXECUTION_LABEL, seconds=seconds)
+    log(f"[5/5] {EXECUTION_LABEL}: listo en {seconds} s")
+    return StepResult(PROGRESSED, EXECUTION_STEP)
 
 
 def _run_agent(store: RunStore, agents: Agents, step: int, log: Log, retry: bool = False) -> StepResult:
@@ -202,8 +238,8 @@ def start(store: RunStore, requirement: Requirement, requested_by: str) -> None:
 
 def make_run_id(title: str) -> str:
     ascii_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")[:40].strip("-") or "run"
-    return f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}"
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")[:24].strip("-") or "run"
+    return f"{slug}-{time.strftime('%m%d-%H%M%S')}"
 
 
 # --- decisión por terminal --------------------------------------------------------
@@ -265,7 +301,7 @@ def _report(result: StepResult, store: RunStore) -> int:
     }
     print(f"\n{messages.get(result.outcome, result.outcome)}")
     if result.step:
-        print(f"Etapa: {result.step}. {LABELS[result.step]}")
+        print(f"Etapa: {result.step}. {LABELS.get(result.step, EXECUTION_LABEL)}")
     if result.reason:
         print(f"Motivo: {result.reason}")
     if result.outcome == REJECTED and result.step == 3:
@@ -287,6 +323,8 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--by", default=None, help="nombre de quien decide (con --interactive) o pide (start)")
         p.add_argument("--no-wait", action="store_true", help="no esperar decisiones del panel; salir al quedar pendiente")
         p.add_argument("--poll", type=float, default=2.0, help="segundos entre lecturas mientras espera")
+        p.add_argument("--deploy", action="store_true",
+                       help="tras aprobar el plan, desplegar de verdad en la cuenta de --target-account")
 
     p_start = sub.add_parser("start", help="crear una ejecución y correr el flujo")
     common(p_start)
@@ -351,7 +389,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"No existe la ejecución {args.run_id!r}")
             return 1
 
-    agents = default_agents(args.repo, args.target_account, args.region)
+    agents = default_agents(args.repo, args.target_account, args.region, deploy=args.deploy)
     decide = terminal_decider(args.by) if args.interactive else None
     try:
         result = run(store, agents, decide=decide, wait=not args.no_wait, poll_seconds=args.poll,

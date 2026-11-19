@@ -28,6 +28,7 @@ from ..bedrock import get_strands_model
 from ..contracts import DeploymentSpec, Design, Requirement, Verdict
 from ..conventions import CONFIGURATION_KEYS
 from ..runs import RunStore
+from .narration import Narrator
 
 ACTOR = "agente-arquitecto"
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -38,11 +39,12 @@ CATALOG_PATH = REPO_ROOT / "templates" / "sysops" / "catalog.yml"
 CONFIGURATION_HELP = {
     ("dynamodb", "partition_key"): "nombre del atributo clave de partición (String)",
     ("dynamodb", "ttl_attribute"): "nombre del atributo TTL (Number, epoch en segundos)",
-    ("lambda", "FREQUENCY_STORE"): "implementación del contador: 'dynamodb' en AWS, 'memory' solo en pruebas",
+    ("lambda", "STORAGE_BACKEND"): "adaptador de persistencia de la Lambda: 'dynamodb' en AWS, 'memory' solo en pruebas",
 }
 # Configuración obligatoria en un diseño aprobado: sin estos nombres, código e
 # infraestructura pueden no coincidir.
-REQUIRED_CONFIGURATION = {"dynamodb": {"partition_key", "ttl_attribute"}}
+REQUIRED_CONFIGURATION = {"dynamodb": {"partition_key"}}
+MAX_CODE_CHARS = 40_000
 
 
 def _find_cycle(graph: dict[str, list[str]]) -> list[str] | None:
@@ -180,7 +182,14 @@ class DesignProposal(BaseModel):
                 f"depends_on forma un ciclo: {' -> '.join(cycle)}. depends_on indica qué debe existir "
                 "antes (ej. la lambda depende de la tabla; la API depende de la lambda), nunca en ambos sentidos"
             )
+        tables = {c.name for c in spec.components if c.kind == "dynamodb"}
         for component in spec.components:
+            if component.kind == "lambda" and tables & set(component.depends_on):
+                if component.configuration.get("STORAGE_BACKEND") != "dynamodb":
+                    raise ValueError(
+                        f"la lambda {component.name} usa una tabla DynamoDB: debe declarar "
+                        "configuration STORAGE_BACKEND=dynamodb"
+                    )
             missing = sorted(REQUIRED_CONFIGURATION.get(component.kind, set()) - set(component.configuration))
             if missing:
                 raise ValueError(
@@ -193,7 +202,7 @@ class DesignProposal(BaseModel):
 SYSTEM_PROMPT_TEMPLATE = """\
 Eres el agente Arquitecto de "Delivery Crew", un sistema multiagente que \
 lleva cambios de requerimiento a despliegue verificado en un servicio de \
-autorizaciones de adquirencia (`auth-service`). Tu única salida es un \
+servicios de una empresa de adquirencia. Tu única salida es un \
 diseño técnico evaluado contra la base de estándares del equipo.
 
 # Base de estándares (cítalos por id, ej. "ARQ-01", en `standards_cited`)
@@ -218,6 +227,9 @@ diseño técnico evaluado contra la base de estándares del equipo.
    el por qué en `decision`.
 4. Nunca propongas guardar PAN, CVV ni datos reales de tarjetas, ni \
    saltar la aprobación humana de ningún paso del flujo.
+
+Idioma: razona y escribe siempre en español. Tu razonamiento se muestra \
+en vivo al equipo y queda en la auditoría.
 
 {deployment_rules}
 """
@@ -253,9 +265,11 @@ el servicio falla en AWS aunque las pruebas pasen.
 8. `configuration` solo admite estas claves (valores con letras, números, \
    "_", "." o "-"):
 {chr(10).join(config_lines)}
-   Reglas: {required}. Una lambda que use una tabla DynamoDB declara \
-   `FREQUENCY_STORE=dynamodb`.
-9. `data_classification` es "synthetic" para auth-service (no hay datos \
+   Reglas: {required}. `ttl_attribute` solo si los datos vencen (por \
+   ejemplo, contadores temporales); un registro de negocio no lleva TTL. \
+   Una lambda que use una tabla DynamoDB depende de ella y declara \
+   `STORAGE_BACKEND=dynamodb`.
+9. `data_classification` es "synthetic" para los servicios demo (no hay datos \
    reales). `environment` es "qa" salvo que el requerimiento diga otra cosa. \
    `health_check` describe la verificación observable tras desplegar; \
    `rollback_strategy`, cómo volver a la versión anterior; `observability`, \
@@ -273,8 +287,42 @@ def load_standards() -> str:
     return "\n\n---\n\n".join(p.read_text(encoding="utf-8") for p in files)
 
 
-def _build_prompt(requirement: Requirement) -> str:
+def code_snapshot(service: str, repo_root: Path = REPO_ROOT, root: Path | None = None) -> str:
+    """Código actual del servicio (sin pruebas), para que el Arquitecto diseñe sobre lo que existe."""
+    from ..conventions import service_dir
+
+    if root is None:
+        try:
+            root = repo_root / service_dir(service)
+        except ValueError:
+            return ""
+    if not root.is_dir():
+        return ""
+    parts: list[str] = []
+    total = 0
+    for path in sorted(root.rglob("*")):
+        rel = path.relative_to(root).as_posix()
+        if (not path.is_file() or "__pycache__" in rel or rel.startswith(("tests/", ".git/", ".worktrees/"))
+                or path.suffix not in {".py", ".md", ".json"}):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        block = f"### {rel}\n```\n{text.strip()}\n```\n"
+        if total + len(block) > MAX_CODE_CHARS:
+            parts.append(f"### (se omitieron más archivos por tamaño)\n")
+            break
+        parts.append(block)
+        total += len(block)
+    return "\n".join(parts)
+
+
+def _build_prompt(requirement: Requirement, code: str = "") -> str:
     criteria = "\n".join(f"- {c}" for c in requirement.acceptance_criteria)
+    code_section = (
+        f"\n# Código actual del servicio `{requirement.affected_service}`\n\n"
+        "Diseña sobre este código: identifica qué falta (por ejemplo, un adaptador de persistencia) y "
+        "qué lineamientos de plataforma aplican. No propongas reescribir lo que ya cumple.\n\n"
+        f"{code}"
+    ) if code else ""
     return f"""\
 Requerimiento (run_id={requirement.run_id}):
 
@@ -284,19 +332,24 @@ Descripción: {requirement.description}
 
 Criterios de aceptación:
 {criteria}
-
+{code_section}
 Produce tu respuesta estructurada según las reglas del sistema.
 """
 
 
-def _invoke_agent(prompt: str, *, fast: bool = False) -> DesignProposal:
+def _invoke_agent(prompt: str, *, fast: bool = False,
+                  narrator: Callable[..., None] | None = None) -> DesignProposal:
     """Única función que toca Bedrock. Inyectable vía el parámetro
     `agent_fn` de `generate_design` para pruebas sin red."""
+    kwargs = {"callback_handler": narrator} if narrator is not None else {}
     agent = Agent(
         model=get_strands_model(fast=fast),
         system_prompt=SYSTEM_PROMPT_TEMPLATE.format(standards=load_standards(), deployment_rules=deployment_rules()),
+        **kwargs,
     )
     result = agent(prompt, structured_output_model=DesignProposal)
+    if narrator is not None and hasattr(narrator, "flush"):
+        narrator.flush()
     if result.structured_output is None:
         raise RuntimeError("El modelo no devolvió una respuesta estructurada válida")
     return result.structured_output
@@ -328,6 +381,7 @@ def generate_design(
     base_dir: str | Path = "runs",
     agent_fn: AgentFn | None = None,
     actor: str = ACTOR,
+    echo: Callable[[str], None] | None = None,
 ) -> Path:
     """Flujo completo de la Unit 03: lee el requerimiento aprobado, invoca al
     agente Arquitecto (o `agent_fn` en pruebas) y escribe `02-diseno.md`.
@@ -339,8 +393,26 @@ def generate_design(
     store = RunStore(run_id, base_dir)
     requirement = store.read_input_for(2, Requirement)
 
-    prompt = _build_prompt(requirement)
-    invoke = agent_fn or _invoke_agent
+    root = None
+    if requirement.source_repo:
+        from ..workspace import workspace_path
+
+        root = workspace_path(store.path)
+    code = code_snapshot(requirement.affected_service, root=root)
+    prompt = _build_prompt(requirement, code)
+    if code:
+        files = code.count("### ")
+        origin = requirement.source_repo or requirement.affected_service
+        store.audit(actor, "agent_message", text=f"Leyendo el código actual de {origin} "
+                    f"({files} archivos) para diseñar sobre lo que existe.")
+    if agent_fn is None:
+        # Lo que el modelo va razonando queda en la auditoría (el panel lo muestra en vivo).
+        narrator = Narrator(lambda text: store.audit(actor, "agent_message", text=text), echo=echo)
+        invoke: AgentFn = lambda p: _invoke_agent(p, narrator=narrator)  # noqa: E731
+    else:
+        invoke = agent_fn
+    store.audit(actor, "agent_message", text="Evaluando el requerimiento contra los estándares "
+                + ", ".join(sorted(known_standard_ids())) + ".")
     proposal = invoke(prompt)
 
     design = _build_design(requirement, proposal)
@@ -371,7 +443,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.seed:
         seed_run(store)
 
-    path = generate_design(args.run_id, args.runs_dir)
+    path = generate_design(args.run_id, args.runs_dir, echo=lambda s: print(s, end="", flush=True))
     print(f"Diseño escrito en: {path} (pendiente de aprobación)")
     return 0
 

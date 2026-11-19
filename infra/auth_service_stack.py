@@ -42,7 +42,7 @@ class AuthServiceStack(Stack):
             timeout=Duration.seconds(10),
             memory_size=256,
             tracing=lambda_.Tracing.ACTIVE,
-            environment={"FREQUENCY_TABLE_NAME": counters.table_name, "FREQUENCY_STORE": "dynamodb"},
+            environment={"TABLE_NAME": counters.table_name, "STORAGE_BACKEND": "dynamodb"},
             log_retention=logs.RetentionDays.ONE_WEEK,
         )
         counters.grant_read_write_data(function)

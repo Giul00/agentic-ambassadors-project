@@ -196,12 +196,25 @@ def test_duplicate_component_names_are_rejected():
         DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
 
 
-def test_dynamodb_must_declare_key_names():
+def test_dynamodb_must_declare_partition_key_but_ttl_is_optional():
     comps = _spec()["components"]
     for c in comps:
         if c["kind"] == "dynamodb":
-            c["configuration"] = {"partition_key": "pk"}
-    with pytest.raises(ValueError, match="debe declarar en configuration: ttl_attribute"):
+            c["configuration"] = {"ttl_attribute": "ttl"}
+    with pytest.raises(ValueError, match="debe declarar en configuration: partition_key"):
+        DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
+    for c in comps:
+        if c["kind"] == "dynamodb":
+            c["configuration"] = {"partition_key": "id"}
+    assert DesignProposal(**_approved(deployment_spec=_spec(components=comps))).deployment_spec
+
+
+def test_lambda_using_a_table_must_declare_dynamodb_backend():
+    comps = _spec()["components"]
+    for c in comps:
+        if c["kind"] == "lambda":
+            c["configuration"] = {"STORAGE_BACKEND": "memory"}
+    with pytest.raises(ValueError, match="STORAGE_BACKEND=dynamodb"):
         DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
 
 
@@ -216,7 +229,7 @@ def test_prompt_lists_supported_kinds_and_configuration_keys():
     rules = deployment_rules()
     for kind in ("api_gateway", "lambda", "dynamodb"):
         assert kind in rules
-    for kind, key in (("dynamodb", "partition_key"), ("dynamodb", "ttl_attribute"), ("lambda", "FREQUENCY_STORE")):
+    for kind, key in (("dynamodb", "partition_key"), ("dynamodb", "ttl_attribute"), ("lambda", "STORAGE_BACKEND")):
         assert f"en componentes `{kind}`, clave `{key}` (sin prefijo)" in rules
     assert "ecs" not in rules.split("homologada:")[1].split(".")[0]  # perfil pendiente, no se ofrece
     rendered = SYSTEM_PROMPT_TEMPLATE.format(standards="S", deployment_rules=rules)

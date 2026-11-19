@@ -1,6 +1,8 @@
 # Panel de control (React + Vite)
 
-![Panel](../docs/img/panel.png)
+![Panel](../docs/img/panel-en-vivo.png)
+
+Para la demo completa (lanzar agentes desde el panel), ver `docs/demo-en-vivo.md`.
 
 ## Levantarlo
 
