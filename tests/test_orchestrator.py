@@ -238,7 +238,7 @@ def test_terminal_decider_approves_and_rejects(store):
 def test_make_run_id_is_valid_for_runstore():
     rid = orch.make_run_id("Código de rechazo 65 / límite!")
     RunStore(rid, "x")  # no lanza: es un id válido
-    assert rid.startswith("codigo-de-rechazo-65-limite-")
+    assert rid.startswith("codigo-de-rechazo-65-lim-")
 
 
 def test_cli_start_validates_arguments(tmp_path, capsys):

@@ -16,6 +16,7 @@ from delivery_crew.contracts import Change, Design, Requirement
 from delivery_crew.runs import RunStore
 
 ROOT = Path(__file__).resolve().parents[1]
+BRANCH = "feature/usuario-desplegar-la-api-de-comercios-con-persis"
 REPO_URL = "https://github.com/tomasdemarco/api-demo-agentic-ambassadors"
 
 
@@ -157,8 +158,8 @@ def test_developer_works_on_the_clone_and_declares_root_deliverable(repo_run, mo
     assert skipped and "GITHUB_TOKEN" in skipped[0]["reason"]
     # El commit queda en el clon, no en este repositorio.
     clone = ws.workspace_path(repo_run.path)
-    assert "merchants_api/adapters/dynamodb.py" in git(clone, "show", "--name-only", "--format=", "agente/repo-run")
-    assert git(ROOT, "branch", "--list", "agente/repo-run") == ""
+    assert "merchants_api/adapters/dynamodb.py" in git(clone, "show", "--name-only", "--format=", BRANCH)
+    assert git(ROOT, "branch", "--list", BRANCH) == ""
 
     # El plan de despliegue entiende el entregable en la raíz del clon.
     repo_run.decide(Change, "aprobado", by="tomas")
@@ -172,7 +173,7 @@ def test_executor_packages_from_the_clone(repo_run, monkeypatch):
     from delivery_crew.agents import deploy_executor as ex
 
     run_developer(repo_run, ROOT, agent_factory=adapter_agent)
-    data, commit = ex.package_from_branch(ws.workspace_path(repo_run.path), "agente/repo-run", ".", "merchants_api")
+    data, commit = ex.package_from_branch(ws.workspace_path(repo_run.path), BRANCH, ".", "merchants_api")
     import io
     import zipfile
 
@@ -205,10 +206,10 @@ def test_pull_request_is_opened_with_token(repo_run, monkeypatch):
     assert change.pull_request_url.endswith("/pull/1")
     (args, auth), = pushed
     assert auth is True and args[2].endswith("api-demo-agentic-ambassadors.git")
-    assert args[3] == "agente/repo-run:refs/heads/agente/repo-run"
+    assert args[3] == f"{BRANCH}:refs/heads/{BRANCH}"
     method, url, body, token = calls[0]
     assert method == "POST" and url.endswith("/repos/tomasdemarco/api-demo-agentic-ambassadors/pulls")
-    assert body["head"] == "agente/repo-run" and body["base"] == "main" and token == "ghp_prueba"
+    assert body["head"] == BRANCH and body["base"] == "main" and token == "ghp_prueba"
     assert "Delivery Crew" in body["title"] and "ARQ-08" in body["body"]
     # El token no queda escrito en ningún artefacto ni en la auditoría.
     for f in repo_run.path.glob("*.md"):
@@ -257,7 +258,7 @@ def test_approved_change_is_merged_with_the_approved_commit(repo_run, monkeypatc
     assert change.merge_commit == "abcdef1234567890abcdef1234567890abcdef12"
     merge = [c for c in calls if c[0] == "PUT"][0]
     assert merge[1].endswith("/pulls/7/merge")
-    approved = git(ws.workspace_path(repo_run.path), "rev-parse", "agente/repo-run")
+    approved = git(ws.workspace_path(repo_run.path), "rev-parse", BRANCH)
     assert merge[2]["sha"] == approved and merge[2]["merge_method"] == "squash"
     assert repo_run.read(Change).approval.status == "aprobado"  # sigue aprobado tras registrar el merge
     assert any(e["action"] == "pull_request_merged" for e in repo_run.read_audit())
@@ -309,6 +310,52 @@ def test_local_code_is_not_merged(tmp_path):
     change = integrate_change(s, ROOT)
     assert change.merge_commit is None
     assert [e for e in s.read_audit() if e["action"] == "merge_skipped"]
+
+
+def test_developer_with_relative_runs_dir_and_long_run_id(tmp_path, source_repo, monkeypatch):
+    """Regresión: la API usa runs/ relativo; git resolvía la ruta desde el clon y la duplicaba."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    run_id = orch.make_run_id("Desplegar la API de comercios con persistencia real")
+    store = RunStore(run_id, "runs").create()
+    req = examples.merchants_requirement(run_id).model_copy(update={"source_repo": REPO_URL})
+    ws.prepare(req, store.path, source=str(source_repo))
+    store.write(req)
+    store.write(examples.merchants_design(run_id))
+    change = run_developer(store, ROOT, agent_factory=adapter_agent)
+    assert change.test_result == "passed"
+    wt = tmp_path / "runs" / run_id / "wt"
+    assert (wt / "merchants_api" / "adapters" / "dynamodb.py").is_file()
+    assert not (tmp_path / "runs" / run_id / "workspace" / "runs").exists()  # sin ruta duplicada
+    assert len(run_id) <= 40
+
+
+def test_branch_name_convention():
+    from delivery_crew.agents.developer import branch_name
+
+    assert branch_name("Tomás Demarco", "Agregar el campo email al comercio") == \
+        "feature/tomas-demarco-agregar-el-campo-email-al-comercio"
+    assert branch_name("", "") == "feature/agente-cambio"
+    assert branch_name("x" * 50, "y" * 80) == "feature/" + "x" * 20 + "-" + "y" * 40
+
+
+def test_existing_branch_gets_a_suffix(repo_run, monkeypatch):
+    from delivery_crew.agents.developer import unique_branch
+
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    clone = ws.workspace_path(repo_run.path)
+    git(clone, "branch", BRANCH)
+    git(clone, "branch", BRANCH + "-2")
+    monkeypatch.setattr(ws, "git", lambda *a, **k: (_ for _ in ()).throw(ws.WorkspaceError("sin red")))
+    assert unique_branch(BRANCH, clone) == BRANCH + "-3"
+
+
+def test_retry_after_rejection_reuses_the_same_branch(repo_run, monkeypatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    first = run_developer(repo_run, ROOT, agent_factory=adapter_agent)
+    repo_run.decide(Change, "rechazado", by="tomas", reason="falta una prueba")
+    again = run_developer(repo_run, ROOT, agent_factory=adapter_agent, fresh=True)
+    assert first.branch == again.branch == BRANCH
 
 
 def test_architect_reads_the_clone(repo_run):

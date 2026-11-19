@@ -12,10 +12,12 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
 import textwrap
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -87,13 +89,38 @@ def _git(cwd: Path, *args: str, check: bool = True) -> str:
     return proc.stdout
 
 
-def branch_name(run_id: str) -> str:
-    return f"agente/{run_id}"
+def _slug(text: str, limit: int) -> str:
+    ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")[:limit].strip("-")
 
 
-def create_worktree(repo: Path, run_id: str, fresh: bool = False, base: str = "HEAD") -> tuple[Path, str]:
-    path = repo / WORKTREES_DIR / run_id
-    branch = branch_name(run_id)
+def branch_name(requester: str, title: str) -> str:
+    """Convención de ramas: feature/{solicitante}-{detalle}, en minúsculas y sin acentos."""
+    return f"feature/{_slug(requester, 20) or 'agente'}-{_slug(title, 40) or 'cambio'}"
+
+
+def unique_branch(base: str, repo: Path, location: CodeLocation | None = None) -> str:
+    """Si la rama ya existe (en el repo local o en GitHub), agrega -2, -3... para no pisar otra ejecución."""
+    existing = {b.strip().lstrip("*+ ").strip() for b in _git(repo, "branch", "--list", f"{base}*").splitlines()}
+    if location is not None and location.repo is not None:
+        try:
+            from ..workspace import git as ws_git
+
+            heads = ws_git(None, "ls-remote", "--heads", location.repo.url, auth=True)
+            existing |= {line.split("refs/heads/", 1)[1] for line in heads.splitlines() if "refs/heads/" in line}
+        except WorkspaceError:
+            pass  # sin red o sin acceso: alcanza con la verificación local
+    name, n = base, 2
+    while name in existing:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
+def create_worktree(repo: Path, run_id: str, fresh: bool = False, base: str = "HEAD",
+                    path: Path | None = None, branch: str | None = None) -> tuple[Path, str]:
+    repo = Path(repo).resolve()  # git resuelve rutas relativas desde el repo: siempre absolutas
+    path = (path or repo / WORKTREES_DIR / run_id).resolve()
+    branch = branch or f"feature/agente-{_slug(run_id, 40)}"
     branch_exists = bool(_git(repo, "branch", "--list", branch).strip())
     if fresh:
         if path.exists():
@@ -297,7 +324,13 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
     store.audit(ACTOR, "developer_started", feedback=feedback,
                 source=location.repo.web_url if location.repo else location.service_path)
     _exclude_worktrees(location.root)
-    worktree, branch = create_worktree(location.root, store.run_id, fresh=fresh)
+    if previous is not None:
+        branch = previous.branch  # el reintento actualiza la misma rama y el mismo PR
+    else:
+        requester = req.approval.by if req.approval.status == "aprobado" and req.approval.by else "agente"
+        branch = unique_branch(branch_name(requester, req.title), location.root, location)
+    worktree, branch = create_worktree(location.root, store.run_id, fresh=fresh,
+                                       path=_worktree_path(store, location), branch=branch)
     log(f"Copia de trabajo: {worktree} (rama {branch})")
 
     def on_event(action: str, details: dict) -> None:
@@ -394,7 +427,7 @@ def integrate_change(store: RunStore, repo: str | Path, log: Callable[[str], Non
     pr_url = change.pull_request_url
     try:
         if not pr_url:
-            worktree = location.root / WORKTREES_DIR / store.run_id
+            worktree = _worktree_path(store, location) or location.root / WORKTREES_DIR / store.run_id
             design = store.read(Design)
             pr_url = push_and_open_pr(location, worktree, change.branch, title=f"[Delivery Crew] {req.title}",
                                       body=_pr_body(req, design, "(ver 03-cambio.md)", change.test_summary))
@@ -412,6 +445,11 @@ def integrate_change(store: RunStore, repo: str | Path, log: Callable[[str], Non
     store.audit(ACTOR, "pull_request_merged", url=pr_url, commit=sha)
     log(f"Pull request mergeado en {location.repo.web_url}: {sha[:12]}")
     return change
+
+
+def _worktree_path(store: RunStore, location: CodeLocation) -> Path | None:
+    """Con un repo clonado, la copia de trabajo va en runs/<id>/wt (ruta corta: Windows limita a 260)."""
+    return (store.path / "wt").resolve() if location.repo is not None else None
 
 
 def _exclude_worktrees(root: Path) -> None:

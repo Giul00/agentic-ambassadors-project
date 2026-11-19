@@ -82,7 +82,7 @@ def test_successful_change(repo, store):
     change = run_developer(store, repo, agent_factory=good_agent)
 
     assert change.test_result == "passed"
-    assert change.branch == "agente/run-dev"
+    assert change.branch == "feature/usuario-codigo-de-rechazo-65-por-limite-de-frecu"
     assert change.pull_request_url is None
     assert set(change.files_modified) == {
         "services/auth_service/auth_service/frequency.py",
@@ -95,7 +95,7 @@ def test_successful_change(repo, store):
     assert store.read(Change).test_result == "passed"
 
     # Commit en la rama del agente, con su autor. El checkout principal no cambió.
-    log = git(repo, "log", "agente/run-dev", "-1", "--format=%an|%s")
+    log = git(repo, "log", "feature/usuario-codigo-de-rechazo-65-por-limite-de-frecu", "-1", "--format=%an|%s")
     assert log.startswith("Agente Desarrollador|Código de rechazo 65")
     assert not (repo / "services" / "auth_service" / "auth_service" / "frequency.py").exists()
     assert git(repo, "status", "--porcelain").strip() == ""
@@ -122,7 +122,7 @@ def test_failing_tests_are_retried_then_reported(repo, store):
     assert change.test_result == "failed"
     assert change.pull_request_url is None
     # Sin commit: la rama sigue en el commit base.
-    assert git(repo, "rev-parse", "agente/run-dev") == git(repo, "rev-parse", "main")
+    assert git(repo, "rev-parse", "feature/usuario-codigo-de-rechazo-65-por-limite-de-frecu") == git(repo, "rev-parse", "main")
 
 
 def test_fixes_on_second_attempt(repo, store):

@@ -238,8 +238,8 @@ def start(store: RunStore, requirement: Requirement, requested_by: str) -> None:
 
 def make_run_id(title: str) -> str:
     ascii_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode("ascii")
-    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")[:40].strip("-") or "run"
-    return f"{slug}-{time.strftime('%Y%m%d-%H%M%S')}"
+    slug = re.sub(r"[^a-z0-9]+", "-", ascii_title.lower()).strip("-")[:24].strip("-") or "run"
+    return f"{slug}-{time.strftime('%m%d-%H%M%S')}"
 
 
 # --- decisión por terminal --------------------------------------------------------

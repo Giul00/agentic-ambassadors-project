@@ -128,6 +128,7 @@ def clone(repo: RepoRef, ref: str | None, dest: Path, source: str | None = None)
     if _size(dest) > MAX_REPO_BYTES:
         shutil.rmtree(dest, ignore_errors=True)
         raise WorkspaceError(f"el repositorio supera {MAX_REPO_BYTES // (1024 * 1024)} MB")
+    git(dest, "config", "core.longpaths", "true")  # rutas largas en Windows
     return git(dest, "rev-parse", "--short=12", "HEAD").strip()
 
 
@@ -170,7 +171,7 @@ class CodeLocation:
 
 def locate(requirement: Requirement, run_path: Path, default_repo: Path) -> CodeLocation:
     if requirement.source_repo:
-        root = workspace_path(run_path)
+        root = workspace_path(run_path).resolve()
         if not (root / ".git").exists():
             raise WorkspaceError(f"falta el clon de {requirement.source_repo} en {root}")
         return CodeLocation(root, ".", detect_package(root), parse_repo_url(requirement.source_repo))
@@ -224,7 +225,8 @@ def push_and_open_pr(location: CodeLocation, worktree: Path, branch: str, title:
     if not token or location.repo is None:
         raise WorkspaceError("sin GITHUB_TOKEN: la rama queda local")
     base = git(location.root, "rev-parse", "--abbrev-ref", "HEAD").strip() or "main"
-    git(worktree, "push", "--force-with-lease", location.repo.url, f"{branch}:refs/heads/{branch}", auth=True)
+    # La rama es exclusiva de esta ejecución (unique_branch): un reintento la reemplaza y actualiza el PR.
+    git(worktree, "push", "--force", location.repo.url, f"{branch}:refs/heads/{branch}", auth=True)
     url = f"https://api.github.com/repos/{location.repo.owner}/{location.repo.name}/pulls"
     status, data = api("POST", url, {"title": title, "head": branch, "base": base, "body": body,
                                      "maintainer_can_modify": True}, token)
