@@ -24,3 +24,9 @@ Thumbs.db
 
 # Ejecuciones locales de agentes
 runs/
+
+# Build
+*.egg-info/
+build/
+dist/
+.pytest_cache/
