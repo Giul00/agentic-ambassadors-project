@@ -103,6 +103,43 @@ class Requirement(Artifact):
     affected_service: str = Field(min_length=1)
 
 
+class DeploymentComponent(BaseModel):
+    """A component that Architecture authorizes SysOps to provision."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=2)
+    kind: str = Field(min_length=2, pattern=r"^[a-z][a-z0-9_-]*$")
+    depends_on: list[str] = Field(default_factory=list)
+    configuration: dict[str, str] = Field(default_factory=dict)
+
+
+class DeploymentSpec(BaseModel):
+    """Structured operational constraints supplied by Architecture."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    environment: Literal["dev", "qa", "uat", "prod"]
+    components: list[DeploymentComponent] = Field(min_length=1)
+    network_exposure: Literal["private", "internal", "public"]
+    data_classification: Literal["synthetic", "internal", "confidential"]
+    health_check: str = Field(min_length=3)
+    rollback_strategy: str = Field(min_length=10)
+    observability: list[str] = Field(min_length=1)
+
+
+class DeployableArtifact(BaseModel):
+    """A build output supplied by Development for one architecture component."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    component: str = Field(min_length=2)
+    kind: Literal["zip", "container", "static", "package"]
+    source_path: str = Field(min_length=1)
+    build_command: str = Field(min_length=1)
+    entrypoint: str | None = None
+
+
 class Design(Artifact):
     """02: salida del agente Arquitecto."""
 
@@ -116,6 +153,7 @@ class Design(Artifact):
     verdict: Verdict
     standards_cited: list[str] = Field(default_factory=list)
     open_questions: list[str] = Field(default_factory=list)
+    deployment_spec: DeploymentSpec | None = None
 
     @model_validator(mode="after")
     def _verdict_needs_support(self) -> "Design":
@@ -137,6 +175,7 @@ class Change(Artifact):
     files_modified: list[str] = Field(min_length=1)
     test_result: Literal["passed", "failed"]
     test_summary: str = Field(min_length=1)
+    deliverables: list[DeployableArtifact] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _pr_only_if_tests_pass(self) -> "Change":

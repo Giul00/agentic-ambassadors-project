@@ -13,34 +13,29 @@ from delivery_crew.contracts import Change, Deployment, Design
 from delivery_crew.runs import NotApprovedError, RunStore
 
 
-DEFAULT_RESOURCES = [
-    "AWS Lambda: actualización del handler auth-service",
-    "Amazon DynamoDB: tabla de frecuencia con TTL de 60 segundos",
-    "IAM: permiso mínimo de lectura/escritura de la Lambda sobre la tabla",
-    "Amazon API Gateway: endpoint POST /authorize",
-    "Amazon CloudWatch: logs, métricas y health check",
-]
-DEFAULT_ROLLBACK = (
-    "Restaurar la versión previa aprobada de la Lambda, verificar el endpoint y revisar CloudWatch. "
-    "No eliminar la tabla DynamoDB automáticamente para preservar evidencia de auditoría."
-)
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_ROOT = REPOSITORY_ROOT / "templates" / "sysops"
 
 
 def select_template_profiles(design: Design) -> list[str]:
-    """Select only catalog profiles justified by Architecture's approved components."""
-    components = " ".join(design.components).lower()
-    profiles: list[str] = []
-    if "dynamodb" in components or "lambda" in components or "auth-service" in components:
-        profiles.append("lambda_dynamodb")
-    if "s3" in components:
-        profiles.append("s3")
-    if "cloudwatch" in components or "alarma" in components:
-        profiles.append("cloudwatch_alarm")
-    if "ecs" in components or "fargate" in components:
-        profiles.append("ecs_fargate")
-    return profiles
+    """Compose catalog profiles from Architecture's structured deployment spec."""
+    if not design.deployment_spec:
+        raise ValueError("el diseño no contiene deployment_spec estructurado")
+    catalog = yaml.safe_load((TEMPLATE_ROOT / "catalog.yml").read_text(encoding="utf-8"))
+    required = {component.kind for component in design.deployment_spec.components}
+    selected: list[str] = []
+    covered: set[str] = set()
+    for name, profile in catalog["profiles"].items():
+        capabilities = set(profile.get("capabilities", []))
+        if capabilities and capabilities.issubset(required):
+            if profile.get("status", "ready") != "ready":
+                raise ValueError(f"el perfil {name!r} aún no está homologado para despliegue")
+            selected.append(name)
+            covered.update(capabilities)
+    missing = required - covered
+    if missing:
+        raise ValueError(f"no hay perfil homologado para los componentes: {', '.join(sorted(missing))}")
+    return selected
 
 
 def generate_bundle(store: RunStore, design: Design, change: Change, deployment: Deployment, profiles: list[str]) -> Path:
@@ -78,6 +73,8 @@ def generate_bundle(store: RunStore, design: Design, change: Change, deployment:
         "run_id": deployment.run_id,
         "source_branch": change.branch,
         "architecture_decision": design.decision,
+        "deployment_spec": design.deployment_spec.model_dump(mode="json") if design.deployment_spec else None,
+        "deliverables": [artifact.model_dump(mode="json") for artifact in change.deliverables],
         "target_account_id": deployment.target_account_id,
         "region": deployment.region,
         "template_profiles": profiles,
@@ -100,21 +97,26 @@ def create_plan(run_id: str, target_account_id: str, region: str = "us-west-2", 
         raise NotApprovedError("02-diseno.md no está aprobado; SysOps no puede elegir infraestructura")
     change = store.read_input_for(4, Change)
     profiles = select_template_profiles(design)
-    if not profiles:
-        raise ValueError("el diseño aprobado no declara componentes con perfil de infraestructura conocido")
-    resources = list(DEFAULT_RESOURCES)
-    if not any(path.startswith("infra/") for path in change.files_modified):
-        resources.append("Nota: el PR no contiene IaC; SysOps aplica la infraestructura versionada en infra/.")
+    spec = design.deployment_spec
+    assert spec is not None  # validated by select_template_profiles
+    compute_components = {component.name for component in spec.components if component.kind in {"lambda", "ecs", "container"}}
+    artifact_components = {artifact.component for artifact in change.deliverables}
+    missing_artifacts = compute_components - artifact_components
+    if missing_artifacts:
+        raise ValueError(f"Desarrollo no entregó artefactos para: {', '.join(sorted(missing_artifacts))}")
+    resources = [f"{component.kind}: {component.name}" for component in spec.components]
+    resources.extend(f"Observabilidad: {item}" for item in spec.observability)
     deployment = Deployment(
         run_id=run_id,
         target_account_id=target_account_id,
         region=region,
         resources=resources,
-        estimated_cost_usd=0.05,
-        rollback_plan=DEFAULT_ROLLBACK,
+        estimated_cost_usd=0.05 * len(profiles),
+        rollback_plan=spec.rollback_strategy,
         health_check="pendiente",
         body=(f"Plan generado para la rama `{change.branch}`. Pruebas del desarrollador: {change.test_summary}.\n\n"
               f"Diseño de Arquitectura: {design.decision}\n"
+              f"Health check aprobado: {spec.health_check}\n"
               f"Perfiles seleccionados desde `templates/sysops/catalog.yml`: {', '.join(profiles)}.\n\n"
               "Pendiente de aprobación humana de SysOps. Este agente no ejecuta `cdk deploy`."),
     )

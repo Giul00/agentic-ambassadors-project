@@ -16,12 +16,14 @@ Campos: título, descripción, criterios de aceptación, servicio afectado.
 
 ## 2. Diseño (salida del agente Arquitecto)
 Archivo: `runs/<id>/02-diseno.md`
-Campos: resumen, componentes afectados, decisión (ADR), riesgos, veredicto contra estándares (`aprobado` | `observaciones` | `rechazado`).
+ Campos: resumen, componentes afectados, decisión (ADR), riesgos, veredicto contra estándares (`aprobado` | `observaciones` | `rechazado`) y `deployment_spec`.
+ `deployment_spec` declara ambiente, componentes tipados, dependencias, exposición de red, clasificación de datos, health check, rollback y observabilidad. Es obligatorio para que SysOps genere infraestructura.
 Estado de aprobación humana: `pendiente` | `aprobado` | `rechazado`, con nombre y fecha.
 
 ## 3. Cambio de código (salida del agente Desarrollador)
 Archivo: `runs/<id>/03-cambio.md`
-Campos: rama, enlace al pull request, archivos modificados, resultado de las pruebas.
+ Campos: rama, enlace al pull request, archivos modificados, resultado de las pruebas y `deliverables`.
+ Cada entregable declara el componente de Arquitectura que implementa, tipo de artefacto (`zip`, `container`, `static` o `package`), ruta fuente, comando de build y entrypoint cuando aplica.
 Estado de aprobación humana: igual al anterior.
 
 ## 4. Plan de despliegue (salida del agente Despliegue)

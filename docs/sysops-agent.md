@@ -19,7 +19,7 @@ cdk synth/diff → aprobación → deploy → health check → rollback si corre
 
 ## Uso local
 
-El archivo de entrada usa YAML front matter y los campos del contrato compartido: `branch`, `pull_request_url`, `files_modified`, `test_result`, `test_summary` y `approval.status: aprobado`.
+El agente consume `deployment_spec` aprobado en `02-diseno.md` y los `deliverables` de `03-cambio.md`. El diseño define componentes, red, datos, health check, rollback y observabilidad; Desarrollo declara cómo construir cada artefacto. Si falta un componente, artefacto o perfil homologado, el agente se detiene sin generar IaC parcial.
 
 ```powershell
 python -m delivery_crew.agents.deployment demo-001 --target-account 123456789012
