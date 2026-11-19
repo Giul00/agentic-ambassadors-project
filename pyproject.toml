@@ -25,3 +25,7 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "services/auth_service/tests"]
 pythonpath = ["src", "services/auth_service"]
+markers = [
+    "bedrock_smoke: llama a Bedrock real; excluido de la corrida normal",
+]
+addopts = "-m 'not bedrock_smoke'"
