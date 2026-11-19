@@ -56,6 +56,13 @@ export interface Config {
   target_account: string | null;
   region: string;
   model_id: string;
+  deploy_enabled: boolean;
+}
+
+export interface Service {
+  name: string;
+  summary: string;
+  demo: { title: string; description: string; acceptance_criteria: string[]; affected_service: string } | null;
 }
 
 export interface NewRun {

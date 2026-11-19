@@ -27,7 +27,15 @@ def main() -> None:
     parser.add_argument("--repo", default=None, help="raíz del repositorio (para el agente Desarrollador)")
     parser.add_argument("--target-account", default=None,
                         help="cuenta de despliegue para el plan; por defecto, la de las credenciales activas")
+    parser.add_argument("--deploy", action="store_true",
+                        help="tras aprobar el plan, desplegar de verdad (requiere permisos completos en la cuenta)")
     args = parser.parse_args()
+
+    if args.deploy:
+        os.environ["DELIVERY_CREW_DEPLOY"] = "1"
+        print("Despliegue real ACTIVADO: al aprobar el plan se crea el stack en AWS.")
+    else:
+        print("Despliegue real desactivado: el flujo termina en el plan aprobado (use --deploy para activarlo).")
 
     if args.runs_dir:
         os.environ["DELIVERY_CREW_RUNS_DIR"] = args.runs_dir

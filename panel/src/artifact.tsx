@@ -1,6 +1,6 @@
 import type { Deliverable, DeploymentSpec, Stage } from "./types";
 
-type Kind = "text" | "list" | "link" | "money" | "bool" | "badge" | "code" | "spec" | "deliverables";
+type Kind = "text" | "list" | "link" | "money" | "bool" | "badge" | "code" | "spec" | "deliverables" | "log";
 interface Field {
   label: string;
   field: string;
@@ -35,11 +35,16 @@ const FIELDS: Record<Stage["key"], Field[]> = {
   deployment: [
     { label: "Cuenta de despliegue", field: "target_account_id", kind: "code" },
     { label: "Región", field: "region", kind: "code" },
+    { label: "Stack de CloudFormation", field: "stack_name", kind: "code" },
+    { label: "Ambiente", field: "environment", kind: "code" },
     { label: "Recursos", field: "resources", kind: "list" },
     { label: "Costo estimado", field: "estimated_cost_usd", kind: "money" },
     { label: "Plan de rollback", field: "rollback_plan" },
+    { label: "Ejecución del despliegue", field: "deployment_status", kind: "badge" },
+    { label: "URL de la API", field: "endpoint_url", kind: "link" },
+    { label: "Commit desplegado", field: "deployed_commit", kind: "code" },
     { label: "Verificación de salud", field: "health_check", kind: "badge" },
-    { label: "Revertido", field: "rolled_back", kind: "bool" },
+    { label: "Registro del despliegue", field: "deployment_log", kind: "log" },
   ],
 };
 
@@ -124,6 +129,11 @@ function Value({ kind = "text", value }: { kind?: Kind; value: unknown }) {
       return <SpecView spec={value as DeploymentSpec} />;
     case "deliverables":
       return <DeliverablesView items={value as Deliverable[]} />;
+    case "log": {
+      const lines = value as string[];
+      if (lines.length === 0) return <span className="muted">—</span>;
+      return <pre className="deploy-log">{lines.join("\n")}</pre>;
+    }
     case "list": {
       const items = value as string[];
       if (items.length === 0) return <span className="muted">Ninguno</span>;

@@ -4,7 +4,7 @@ import { api } from "./api";
 import { ArtifactView } from "./artifact";
 import { ChangeBody } from "./ChangeBody";
 import { NewRunForm } from "./NewRunForm";
-import type { AuditEntry, Config, NewRun, RunDetail, RunState, RunSummary, Stage, StageState } from "./types";
+import type { AuditEntry, Config, NewRun, RunDetail, RunState, RunSummary, Service, Stage, StageState } from "./types";
 
 const POLL_MS = 2000;
 
@@ -273,11 +273,13 @@ export default function App() {
   const [manualHours, setManualHours] = useLocalState<number>("manualHours", 4);
   const [name, setName] = useLocalState("approverName", "");
   const [config, setConfig] = useState<Config | null>(null);
+  const [services, setServices] = useState<Service[]>([]);
   const [showNew, setShowNew] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     api.config().then(setConfig).catch(() => setConfig(null));
+    api.services().then(setServices).catch(() => setServices([]));
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, []);
@@ -385,7 +387,7 @@ export default function App() {
         )}
 
         {showNew && (
-          <NewRunForm config={config} defaultName={name} onCreate={createRun} onCancel={() => setShowNew(false)} />
+          <NewRunForm config={config} services={services} defaultName={name} onCreate={createRun} onCancel={() => setShowNew(false)} />
         )}
 
         {!showNew && !detail && !connError && <p className="muted">Selecciona una ejecución o lanza una nueva.</p>}

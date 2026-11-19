@@ -193,3 +193,11 @@ a { color: var(--blue); }
 .d-file { color: var(--text); font-weight: 700; background: var(--panel-2); margin-top: 0.4rem; }
 .d-meta { color: var(--muted); }
 .live-wait { color: var(--yellow); }
+
+.new-run select { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 0.55rem 0.7rem; font: inherit; }
+.service-summary { margin-top: -0.4rem; }
+.deploy-log { background: #0b0f14; border: 1px solid var(--border); border-radius: 8px; padding: 0.6rem 0.8rem; max-height: 320px; overflow: auto; font-size: 0.8rem; white-space: pre-wrap; margin: 0.3rem 0 0; }
+.pill-desplegado { color: var(--green); border-color: var(--green); }
+.pill-fallido { color: var(--red); border-color: var(--red); }
+.pill-en_curso { color: var(--blue); border-color: var(--blue); }
+.pill-no_ejecutado { color: var(--muted); }

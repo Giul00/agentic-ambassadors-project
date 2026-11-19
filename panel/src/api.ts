@@ -1,4 +1,4 @@
-import type { AuditEntry, Config, NewRun, RunDetail, RunSummary } from "./types";
+import type { AuditEntry, Config, NewRun, RunDetail, RunSummary, Service } from "./types";
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
@@ -25,6 +25,7 @@ const json = (body: unknown): RequestInit => ({
 
 export const api = {
   config: () => request<Config>("/api/config"),
+  services: () => request<Service[]>("/api/services"),
   runs: () => request<RunSummary[]>("/api/runs"),
   run: (id: string) => request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`),
   audit: (id: string) => request<AuditEntry[]>(`/api/runs/${encodeURIComponent(id)}/audit`),

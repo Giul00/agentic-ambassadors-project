@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from .. import orchestrator as orch
 from ..bedrock import model_id, region as default_region
 from ..contracts import Requirement
+from ..conventions import available_services, service_dir
 from ..runs import RunStore
 from . import service
 from .runner import AgentsFactory, RunnerBusy, RunnerRegistry
@@ -62,14 +63,16 @@ class DecisionIn(BaseModel):
 
 def create_app(runs_dir: str | Path | None = None, agents_factory: AgentsFactory | None = None,
                target_account: str | None = None, repo: str | Path | None = None,
-               region: str | None = None) -> FastAPI:
+               region: str | None = None, deploy: bool | None = None) -> FastAPI:
     base = Path(runs_dir or os.environ.get("DELIVERY_CREW_RUNS_DIR", "runs"))
     target_account = target_account or os.environ.get("DELIVERY_CREW_TARGET_ACCOUNT") or None
     repo_path = Path(repo or os.environ.get("DELIVERY_CREW_REPO", ".")).resolve()
     aws_region = region or default_region()
+    if deploy is None:
+        deploy = os.environ.get("DELIVERY_CREW_DEPLOY", "").lower() in ("1", "true", "si", "sí")
     if agents_factory is None:
         def agents_factory() -> orch.Agents:
-            return orch.default_agents(repo_path, target_account, aws_region)
+            return orch.default_agents(repo_path, target_account, aws_region, deploy=bool(deploy))
     runners = RunnerRegistry(base, agents_factory)
     origins = [
         o.strip()
@@ -102,7 +105,29 @@ def create_app(runs_dir: str | Path | None = None, agents_factory: AgentsFactory
 
     @app.get("/api/config")
     def config() -> dict:
-        return {"target_account": target_account, "region": aws_region, "model_id": model_id()}
+        return {"target_account": target_account, "region": aws_region, "model_id": model_id(),
+                "deploy_enabled": deploy}
+
+    @app.get("/api/services")
+    def services() -> list[dict]:
+        """Código disponible para pedir cambios, con un requerimiento de ejemplo para cada uno."""
+        from .. import examples
+
+        demos = {
+            "merchants-api": examples.MERCHANTS_REQUIREMENT,
+            "auth-service": {k: getattr(examples.requirement(), k)
+                             for k in ("title", "description", "acceptance_criteria", "affected_service")},
+        }
+        out = []
+        for name in available_services(repo_path):
+            readme = repo_path / service_dir(name) / "README.md"
+            summary = ""
+            if readme.is_file():
+                lines = [ln.strip() for ln in readme.read_text(encoding="utf-8").splitlines()]
+                summary = next((ln for ln in lines if ln and not ln.startswith("#")), "")
+            out.append({"name": name, "summary": summary[:300], "demo": demos.get(name)})
+        out.sort(key=lambda s: (s["name"] != "merchants-api", s["name"]))
+        return out
 
     @app.get("/api/runs")
     def list_runs() -> list[dict]:
@@ -110,6 +135,8 @@ def create_app(runs_dir: str | Path | None = None, agents_factory: AgentsFactory
 
     @app.post("/api/runs", status_code=201)
     def create_run(body: NewRunIn) -> dict:
+        if body.affected_service not in available_services(repo_path):
+            raise HTTPException(status_code=422, detail=f"no hay código para el servicio {body.affected_service!r}")
         run_id = orch.make_run_id(body.title)
         store = RunStore(run_id, base)
         try:

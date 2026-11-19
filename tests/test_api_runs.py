@@ -70,6 +70,23 @@ def test_config_exposes_target_account_and_model(env):
     client, _, _ = env
     cfg = client.get("/api/config").json()
     assert cfg["target_account"] == "123456789012" and cfg["model_id"]
+    assert cfg["deploy_enabled"] is False  # el despliegue real está apagado salvo que se pida
+
+
+def test_services_lists_available_code_with_demo_requirement(env):
+    client, _, _ = env
+    services = client.get("/api/services").json()
+    names = [s["name"] for s in services]
+    assert names[0] == "merchants-api" and "auth-service" in names
+    merchants = services[0]
+    assert merchants["demo"]["affected_service"] == "merchants-api"
+    assert "comercios" in merchants["summary"].lower()
+
+
+def test_create_run_rejects_unknown_service(env):
+    client, agents, _ = env
+    r = client.post("/api/runs", json={**NEW_RUN, "affected_service": "no-existe"})
+    assert r.status_code == 422 and agents.calls == []
 
 
 def test_create_run_starts_the_flow_and_waits_for_panel_approvals(env):
