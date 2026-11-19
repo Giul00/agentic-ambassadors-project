@@ -12,6 +12,13 @@ Sistema multiagente que lleva un cambio de requerimiento a despliegue verificado
    ```
 3. El steering AI-DLC se carga solo. Para planificar, describir la idea y el planificador hará preguntas una por una hasta generar las unidades de trabajo en `aidlc/`.
 
+## Documentación
+- `docs/arquitectura.md`: diagramas y decisiones iniciales.
+- `docs/caso-demo.md`: caso demo, guion y plan B.
+- `aidlc/plan.md`: plan de trabajo, reparto y orden de merges.
+- `aidlc/units/`: siete unidades de trabajo.
+- `aidlc/elaboration-log.md`: supuestos por confirmar.
+
 ## Estructura
 - `.kiro/steering/`: reglas del proyecto (`product`, `tech`, `guardrails`, `contratos-agentes`) y el steering AI-DLC (`aidlc-*`).
 - `.kiro/agents/`: agentes del planificador AI-DLC.
