@@ -66,6 +66,34 @@ def test_missing_artifact(store):
         store.read(Design)
 
 
+def test_concurrent_audit_writes_do_not_corrupt(store):
+    import json
+    import threading
+
+    def worker(n):
+        for i in range(50):
+            store.audit(f"hilo-{n}", "tool_read_file", path=f"archivo-{i}-" + "x" * 200)
+
+    threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    lines = store.audit_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1 + 8 * 50  # run_created + eventos
+    for line in lines:
+        json.loads(line)  # ninguna línea dañada
+
+
+def test_corrupt_audit_line_is_skipped(store):
+    store.audit("x", "accion_1")
+    with store.audit_path.open("a", encoding="utf-8") as fh:
+        fh.write('"}\n{no json\n[1, 2]\n')
+    store.audit("x", "accion_2")
+    actions = [e["action"] for e in store.read_audit()]
+    assert actions == ["run_created", "accion_1", "accion_2"]
+
+
 def test_demo_run_is_valid(tmp_path):
     demo = examples.write_demo_run(tmp_path)
     for step in (2, 3, 4):
