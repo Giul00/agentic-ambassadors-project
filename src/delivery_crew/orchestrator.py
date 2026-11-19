@@ -87,9 +87,12 @@ def default_agents(repo: str | Path = ".", target_account: str | None = None, re
 
     def deployment(store: RunStore) -> None:
         from .agents.deployment import create_plan
+        from .agents.developer import integrate_change
 
         if not target_account:
             raise ValueError("falta --target-account (cuenta de despliegue de 12 dígitos)")
+        # El cambio ya fue aprobado por una persona: se integra en el repo antes de planificar.
+        integrate_change(store, repo, log=lambda m: log(f"    {m}"))
         create_plan(store.run_id, target_account, region=region, base_dir=str(store.path.parent))
 
     def executor(store: RunStore) -> None:

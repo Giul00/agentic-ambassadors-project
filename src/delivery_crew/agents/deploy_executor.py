@@ -58,15 +58,21 @@ def _git(repo: Path, *args: str, binary: bool = False) -> Any:
     return proc.stdout if binary else proc.stdout.decode("utf-8", "replace")
 
 
-def package_from_branch(repo: Path, branch: str, source_path: str) -> tuple[bytes, str]:
+def _in_tree(source_path: str, name: str) -> str:
+    return name if source_path in ("", ".") else f"{source_path.rstrip('/')}/{name}"
+
+
+def package_from_branch(repo: Path, branch: str, source_path: str, package: str | None = None) -> tuple[bytes, str]:
     """Zip del paquete del servicio tal como está en la rama (sin pruebas). Devuelve (zip, commit)."""
     if not re.fullmatch(r"[A-Za-z0-9_./-]{1,120}", source_path) or ".." in source_path:
         raise DeployError(f"ruta de entregable no permitida: {source_path!r}")
     if not re.fullmatch(r"[A-Za-z0-9_./-]{1,120}", branch) or ".." in branch:
         raise DeployError(f"rama no permitida: {branch!r}")
-    package = Path(source_path).name
+    package = package or Path(source_path).name
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,40}", package):
+        raise DeployError(f"paquete no permitido: {package!r}")
     commit = _git(repo, "rev-parse", "--short=12", branch).strip()
-    data = _git(repo, "archive", "--format=zip", f"--prefix={package}/", f"{commit}:{source_path}/{package}",
+    data = _git(repo, "archive", "--format=zip", f"--prefix={package}/", f"{commit}:{_in_tree(source_path, package)}",
                 binary=True)
     return data, commit
 
@@ -268,8 +274,11 @@ def _outputs(cfn: Any, stack: str) -> dict[str, str]:
 def execute_deployment(store: RunStore, repo: str | Path = ".", clients: Clients | None = None,
                        http: HttpFn = http_request, sleep: Callable[[float], None] = time.sleep,
                        poll_seconds: float = POLL_SECONDS) -> Deployment:
-    repo = Path(repo).resolve()
+    from ..workspace import code_root
+    from .deployment import package_of
+
     deployment = store.read(Deployment)
+    repo = code_root(store, Path(repo))
     if deployment.approval.status != "aprobado":
         raise NotApprovedError("04-despliegue.md no está aprobado por SysOps; no se ejecuta el despliegue")
     change = store.read(Change)
@@ -307,8 +316,8 @@ def execute_deployment(store: RunStore, repo: str | Path = ".", clients: Clients
         log(f"Cuenta verificada: {account} ({deployment.region})")
 
         artifact = zips[0]
-        data, commit = package_from_branch(repo, change.branch, artifact.source_path)
-        package = Path(artifact.source_path).name
+        package = package_of(artifact)
+        data, commit = package_from_branch(repo, change.branch, artifact.source_path, package)
         log(f"Paquete {package}.zip desde {change.branch}@{commit} ({len(data) // 1024 or 1} KB, sin pruebas)")
 
         bucket = f"delivery-crew-artifacts-{account}-{deployment.region}"
@@ -328,7 +337,7 @@ def execute_deployment(store: RunStore, repo: str | Path = ".", clients: Clients
             raise DeployError("el stack no devolvió la salida ApiUrl")
         log(f"API desplegada: {url}")
 
-        smoke_text = read_from_branch(repo, commit, f"{artifact.source_path}/smoke.json")
+        smoke_text = read_from_branch(repo, commit, _in_tree(artifact.source_path, "smoke.json"))
         results: list[SmokeResult] = []
         if smoke_text:
             log("Prueba de humo contra la API desplegada:")

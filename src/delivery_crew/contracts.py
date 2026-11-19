@@ -103,6 +103,10 @@ class Requirement(Artifact):
     description: str = Field(min_length=10)
     acceptance_criteria: list[str] = Field(min_length=1)
     affected_service: str = Field(min_length=1)
+    # Código de origen: si se indica, se clona ese repo de GitHub en runs/<id>/workspace/.
+    source_repo: str | None = Field(default=None, pattern=r"^https://github\.com/[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}?(\.git)?/?$")
+    source_ref: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._/-]{1,100}$")
+    source_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,40}$")
 
 
 class DeploymentComponent(BaseModel):
@@ -201,6 +205,8 @@ class Change(Artifact):
     test_result: Literal["passed", "failed"]
     test_summary: str = Field(min_length=1)
     deliverables: list[DeployableArtifact] = Field(default_factory=list)
+    # Integración en el repo de origen tras la aprobación humana (commit del squash merge).
+    merge_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,40}$")
 
     @model_validator(mode="after")
     def _pr_only_if_tests_pass(self) -> "Change":

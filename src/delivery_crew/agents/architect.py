@@ -287,21 +287,23 @@ def load_standards() -> str:
     return "\n\n---\n\n".join(p.read_text(encoding="utf-8") for p in files)
 
 
-def code_snapshot(service: str, repo_root: Path = REPO_ROOT) -> str:
+def code_snapshot(service: str, repo_root: Path = REPO_ROOT, root: Path | None = None) -> str:
     """Código actual del servicio (sin pruebas), para que el Arquitecto diseñe sobre lo que existe."""
     from ..conventions import service_dir
 
-    try:
-        root = repo_root / service_dir(service)
-    except ValueError:
-        return ""
+    if root is None:
+        try:
+            root = repo_root / service_dir(service)
+        except ValueError:
+            return ""
     if not root.is_dir():
         return ""
     parts: list[str] = []
     total = 0
     for path in sorted(root.rglob("*")):
         rel = path.relative_to(root).as_posix()
-        if not path.is_file() or "__pycache__" in rel or rel.startswith("tests/") or path.suffix not in {".py", ".md", ".json"}:
+        if (not path.is_file() or "__pycache__" in rel or rel.startswith(("tests/", ".git/", ".worktrees/"))
+                or path.suffix not in {".py", ".md", ".json"}):
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         block = f"### {rel}\n```\n{text.strip()}\n```\n"
@@ -391,11 +393,17 @@ def generate_design(
     store = RunStore(run_id, base_dir)
     requirement = store.read_input_for(2, Requirement)
 
-    code = code_snapshot(requirement.affected_service)
+    root = None
+    if requirement.source_repo:
+        from ..workspace import workspace_path
+
+        root = workspace_path(store.path)
+    code = code_snapshot(requirement.affected_service, root=root)
     prompt = _build_prompt(requirement, code)
     if code:
         files = code.count("### ")
-        store.audit(actor, "agent_message", text=f"Leyendo el código actual de {requirement.affected_service} "
+        origin = requirement.source_repo or requirement.affected_service
+        store.audit(actor, "agent_message", text=f"Leyendo el código actual de {origin} "
                     f"({files} archivos) para diseñar sobre lo que existe.")
     if agent_fn is None:
         # Lo que el modelo va razonando queda en la auditoría (el panel lo muestra en vivo).

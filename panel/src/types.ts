@@ -57,6 +57,9 @@ export interface Config {
   region: string;
   model_id: string;
   deploy_enabled: boolean;
+  github_token: boolean;
+  allowed_owners: string[];
+  demo_repo: string;
 }
 
 export interface Service {
@@ -71,6 +74,8 @@ export interface NewRun {
   acceptance_criteria: string[];
   affected_service: string;
   requested_by: string;
+  source_repo?: string;
+  source_ref?: string;
 }
 
 export interface RunSummary {

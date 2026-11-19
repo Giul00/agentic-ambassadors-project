@@ -86,7 +86,29 @@ function Row({ e }: { e: AuditEntry }) {
     case "developer_started":
       return e.feedback ? (
         <li className="ev ev-stage">{t} ↻ el Desarrollador recibe el motivo del rechazo: “{str(e.feedback)}”</li>
+      ) : e.source && String(e.source).startsWith("https://") ? (
+        <li className="ev ev-tool who-dev">{t} 📥 trabaja sobre el clon de <code>{str(e.source)}</code></li>
       ) : null;
+    case "pull_request_opened":
+      return (
+        <li className="ev ev-ok who-dev">
+          {t} 🔀 abrió el pull request{" "}
+          <a href={str(e.url)} target="_blank" rel="noreferrer noopener">{str(e.url)}</a>
+        </li>
+      );
+    case "pull_request_skipped":
+      return <li className="ev ev-muted">{t} 🔀 sin pull request: {str(e.reason)}</li>;
+    case "pull_request_merged":
+      return (
+        <li className="ev ev-final ev-ok who-dev">
+          {t} ✅ mergeó el pull request en <code>main</code> ({str(e.commit).slice(0, 12)}){" "}
+          <a href={str(e.url)} target="_blank" rel="noreferrer noopener">ver PR</a>
+        </li>
+      );
+    case "merge_skipped":
+      return <li className="ev ev-muted">{t} 🔀 sin merge: {str(e.reason)}</li>;
+    case "deploy_progress":
+      return <li className="ev ev-tool who-ops">{t} ☁️ {str(e.text)}</li>;
     case "artifact_written":
       if (e.actor in ACTORS && e.actor !== "orquestador") {
         return <li className={`ev ev-tool ${cls}`}>{t} 📄 entregó <code>{str(e.artifact)}</code> para revisión</li>;

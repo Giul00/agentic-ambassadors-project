@@ -12,7 +12,9 @@ const FIELDS: Record<Stage["key"], Field[]> = {
     { label: "Título", field: "title" },
     { label: "Descripción", field: "description" },
     { label: "Criterios de aceptación", field: "acceptance_criteria", kind: "list" },
-    { label: "Servicio afectado", field: "affected_service", kind: "code" },
+    { label: "Repositorio", field: "source_repo", kind: "link" },
+    { label: "Commit de partida", field: "source_commit", kind: "code" },
+    { label: "Servicio", field: "affected_service", kind: "code" },
   ],
   design: [
     { label: "Resumen", field: "summary" },
@@ -27,6 +29,7 @@ const FIELDS: Record<Stage["key"], Field[]> = {
   change: [
     { label: "Rama", field: "branch", kind: "code" },
     { label: "Pull request", field: "pull_request_url", kind: "link" },
+    { label: "Merge en el repo", field: "merge_commit", kind: "code" },
     { label: "Archivos modificados", field: "files_modified", kind: "list" },
     { label: "Resultado de pruebas", field: "test_result", kind: "badge" },
     { label: "Resumen de pruebas", field: "test_summary" },

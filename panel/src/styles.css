@@ -201,3 +201,9 @@ a { color: var(--blue); }
 .pill-fallido { color: var(--red); border-color: var(--red); }
 .pill-en_curso { color: var(--blue); border-color: var(--blue); }
 .pill-no_ejecutado { color: var(--muted); }
+.tabs { display: flex; gap: 0.4rem; border-bottom: 1px solid var(--border); }
+.tab { font: inherit; background: none; color: var(--muted); border: 0; border-bottom: 2px solid transparent; padding: 0.5rem 0.9rem; cursor: pointer; font-weight: 600; }
+.tab-on { color: var(--text); border-bottom-color: var(--green); }
+.row { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+.row .grow { flex: 1 1 360px; }
+.row .narrow { flex: 0 1 180px; }

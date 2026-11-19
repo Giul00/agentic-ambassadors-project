@@ -26,7 +26,16 @@ TEMPLATE_PARAMETERS: dict[str, dict[str, str]] = {
 PIPELINE_EXTRA_OVERRIDES = 'CF_EXTRA_PARAMETER_OVERRIDES: ""'
 
 
-def parameter_overrides(design: Design, change: Change) -> dict[str, str]:
+def package_of(artifact) -> str:
+    """Paquete Python del entregable, tomado del entrypoint (<paquete>.handler.lambda_handler)."""
+    entry = artifact.entrypoint or ""
+    package = entry.split(".")[0] if entry else Path(artifact.source_path).name
+    if not re.fullmatch(r"[a-z][a-z0-9_]{1,40}", package or ""):
+        raise ValueError(f"no se puede determinar el paquete del entregable de {artifact.component}")
+    return package
+
+
+def parameter_overrides(design: Design, change: Change, source_root: Path | None = None) -> dict[str, str]:
     """Parámetros de CloudFormation a partir del deployment_spec y los entregables.
 
     Falla si la configuración no tiene parámetro en la plantilla, si dos componentes piden
@@ -56,8 +65,9 @@ def parameter_overrides(design: Design, change: Change) -> dict[str, str]:
 
     lambdas = {c.name for c in spec.components if c.kind == "lambda"}
     for artifact in change.deliverables:
-        source = (REPOSITORY_ROOT / artifact.source_path).resolve()
-        if REPOSITORY_ROOT not in source.parents or not source.is_dir():
+        root = (source_root or REPOSITORY_ROOT).resolve()
+        source = (root / artifact.source_path).resolve()
+        if (source != root and root not in source.parents) or not source.is_dir():
             raise ValueError(f"el entregable de {artifact.component} apunta a una ruta inexistente: {artifact.source_path}")
         if artifact.component in lambdas and artifact.entrypoint:
             put("LambdaHandler", artifact.entrypoint, artifact.component)
@@ -123,8 +133,8 @@ def generate_bundle(store: RunStore, design: Design, change: Change, deployment:
     zips = [a for a in change.deliverables if a.kind == "zip"]
     if zips:
         source = zips[0].source_path
-        package = Path(source).name
-        if not SAFE_VALUE.fullmatch(package) or not re.fullmatch(r"[A-Za-z0-9_/.-]{1,120}", source):
+        package = package_of(zips[0])
+        if not SAFE_VALUE.fullmatch(package) or not re.fullmatch(r"[A-Za-z0-9_/.-]{1,120}", source) or ".." in source:
             raise ValueError(f"ruta de entregable no permitida en el pipeline: {source!r}")
         pipeline = pipeline.replace("  SERVICE_DIR: services/auth_service", f"  SERVICE_DIR: {source}")
         pipeline = pipeline.replace("  SERVICE_PACKAGE: auth_service", f"  SERVICE_PACKAGE: {package}")
@@ -157,7 +167,7 @@ def stack_identity(design: Design, change: Change) -> tuple[str, str, str]:
     assert design.deployment_spec is not None
     environment = design.deployment_spec.environment
     lambdas = [a for a in change.deliverables if a.kind == "zip"]
-    service = Path(lambdas[0].source_path).name.replace("_", "-") if lambdas else "app"
+    service = package_of(lambdas[0]).replace("_", "-") if lambdas else "app"
     project = f"dc-{service}"[:30].rstrip("-")
     return project, environment, f"{project}-{environment}"
 
@@ -177,7 +187,13 @@ def create_plan(run_id: str, target_account_id: str, region: str = "us-west-2", 
     missing_artifacts = compute_components - artifact_components
     if missing_artifacts:
         raise ValueError(f"Desarrollo no entregó artefactos para: {', '.join(sorted(missing_artifacts))}")
-    overrides = parameter_overrides(design, change)
+    from delivery_crew.workspace import WorkspaceError, code_root
+
+    try:
+        root = code_root(store, REPOSITORY_ROOT)
+    except WorkspaceError as exc:
+        raise ValueError(str(exc)) from exc
+    overrides = parameter_overrides(design, change, root)
     project, environment, stack_name = stack_identity(design, change)
     resources = [f"{component.kind}: {component.name}" for component in spec.components]
     resources.extend(f"Observabilidad: {item}" for item in spec.observability)
