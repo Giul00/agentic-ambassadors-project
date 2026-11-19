@@ -1,6 +1,8 @@
 import base64
 import json
 
+import pytest
+
 from auth_service.handler import lambda_handler
 
 
@@ -65,3 +67,19 @@ def test_too_large_body_is_413():
 def test_bad_base64_is_400():
     event = {"httpMethod": "POST", "body": "%%%", "isBase64Encoded": True}
     assert lambda_handler(event)["statusCode"] == 400
+
+
+@pytest.mark.parametrize("code", ["05", "51", "61", "65", "99"])
+def test_every_business_decline_is_http_200(monkeypatch, code):
+    """Contrato HTTP del servicio: un rechazo de negocio NO es un error HTTP.
+
+    Vale para cualquier código, también los que se agreguen en el futuro: el
+    cliente (y el health check del despliegue) lee approved/response_code.
+    """
+    from auth_service import handler
+    from auth_service.models import Decision
+
+    monkeypatch.setattr(handler, "authorize", lambda *a, **k: Decision(False, code, "rechazo de prueba"))
+    status, body = call(GOOD)
+    assert status == 200
+    assert body == {"approved": False, "response_code": code, "message": "rechazo de prueba"}

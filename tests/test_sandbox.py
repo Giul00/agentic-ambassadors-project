@@ -82,3 +82,23 @@ def test_run_tests_has_no_aws_credentials(sandbox, monkeypatch):
 def test_missing_service_dir(tmp_path):
     with pytest.raises(SandboxError):
         Sandbox(tmp_path)
+
+
+def test_existing_tests_cannot_be_modified_but_new_ones_can(sandbox):
+    sb, _ = sandbox
+    with pytest.raises(SandboxError, match="prueba existente"):
+        sb.write_file("tests/test_ok.py", "def test_ok():\n    pass\n")
+    with pytest.raises(SandboxError, match="prueba existente"):
+        sb.write_file("pytest.ini", "[pytest]\n")
+    assert sb.write_file("tests/test_nuevo.py", "def test_n():\n    assert True\n") == "tests/test_nuevo.py"
+    # Un archivo creado por el agente sí lo puede volver a escribir.
+    sb.write_file("tests/test_nuevo.py", "def test_n():\n    assert 1\n")
+    assert (sb.root / "tests" / "test_ok.py").read_text(encoding="utf-8") == "def test_ok():\n    assert True\n"
+
+
+def test_protection_can_be_disabled(tmp_path):
+    svc = tmp_path / "services" / "auth_service" / "tests"
+    svc.mkdir(parents=True)
+    (svc / "test_a.py").write_text("x = 1\n", encoding="utf-8")
+    sb = Sandbox(tmp_path, protect_existing_tests=False)
+    assert sb.write_file("tests/test_a.py", "x = 2\n") == "tests/test_a.py"

@@ -16,7 +16,9 @@ Código del proyecto. Paquete Python `delivery_crew` (Python 3.11 o superior).
 | `delivery_crew/agents/developer.py` | Agente Desarrollador (Strands + Bedrock). Implementa un diseño aprobado en `services/auth_service` dentro de una copia aislada (`.worktrees/<run_id>`), verifica las pruebas, reintenta hasta 3 veces y escribe `03-cambio.md` con el diff. |
 | `delivery_crew/agents/sandbox.py` | Herramientas acotadas del agente: listar, leer y escribir solo dentro del servicio, y correr sus pruebas sin credenciales AWS. |
 
-El servicio demo está en `services/auth_service/` (ver su README). Pendiente: agente Despliegue y orquestador.
+| `delivery_crew/orchestrator.py` | Orquestador (unidad 06): corre Arquitecto, Desarrollador y Despliegue con aprobación humana entre cada uno, desde el panel o la terminal. Ver `docs/orquestador.md`. |
+
+El servicio demo está en `services/auth_service/` (ver su README).
 
 Base de estándares de arquitectura (editable sin tocar código): `docs/estandares/`.
 
