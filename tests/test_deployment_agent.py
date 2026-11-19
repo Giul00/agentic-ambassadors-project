@@ -27,3 +27,8 @@ def test_deployment_agent_writes_contract_and_audit(tmp_path: Path):
     assert store.read(type(deployment)).target_account_id == "123456789012"
     assert "lambda_dynamodb" in deployment.body
     assert any(entry["action"] == "deployment_plan_created" for entry in store.read_audit())
+    bundle = store.path / "generated"
+    assert (bundle / "cloudformation" / "lambda-dynamodb.yml").is_file()
+    assert (bundle / ".gitlab-ci-sysops.yml").is_file()
+    assert (bundle / "scripts" / "health-check-authorize.sh").is_file()
+    assert "pending_sysops_approval" in (bundle / "manifest.yml").read_text(encoding="utf-8")

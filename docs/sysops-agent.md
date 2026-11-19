@@ -27,5 +27,5 @@ python -m delivery_crew.agents.deployment demo-001 --target-account 123456789012
 
 La siguiente iteración incorporará una herramienta de ejecución separada. Antes de que pueda ejecutar un despliegue deberá recibir: una aprobación de SysOps, la cuenta AWS de presentación esperada y los comandos CDK/destino aprobados. Así se evita que una entrada del repositorio active infraestructura por sí sola.
 
-El stack inicial del caso demo vive en `infra/`: API Gateway, Lambda y DynamoDB con TTL. Se valida con `cdk synth` y `cdk diff`; `cdk deploy` permanece bloqueado hasta completar el artefacto de aprobación.
+Además del plan, el agente genera `runs/<id>/generated/`: plantillas CloudFormation seleccionadas desde el catálogo, `.gitlab-ci-sysops.yml`, manifiesto y health check. El bundle queda en estado `pending_sysops_approval`; `cdk deploy` o un despliegue CloudFormation permanece bloqueado hasta completar el artefacto de aprobación.
 

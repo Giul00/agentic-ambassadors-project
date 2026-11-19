@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
+import shutil
 import sys
+
+import yaml
 
 from delivery_crew.contracts import Change, Deployment, Design
 from delivery_crew.runs import NotApprovedError, RunStore
@@ -20,6 +24,8 @@ DEFAULT_ROLLBACK = (
     "Restaurar la versión previa aprobada de la Lambda, verificar el endpoint y revisar CloudWatch. "
     "No eliminar la tabla DynamoDB automáticamente para preservar evidencia de auditoría."
 )
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+TEMPLATE_ROOT = REPOSITORY_ROOT / "templates" / "sysops"
 
 
 def select_template_profiles(design: Design) -> list[str]:
@@ -35,6 +41,55 @@ def select_template_profiles(design: Design) -> list[str]:
     if "ecs" in components or "fargate" in components:
         profiles.append("ecs_fargate")
     return profiles
+
+
+def generate_bundle(store: RunStore, design: Design, change: Change, deployment: Deployment, profiles: list[str]) -> Path:
+    """Render reviewable IaC, pipeline and verification assets for a run.
+
+    The output is intentionally an artifact of the run: it is reviewed and promoted
+    into the delivery branch only after SysOps approves the associated Deployment.
+    """
+    catalog = yaml.safe_load((TEMPLATE_ROOT / "catalog.yml").read_text(encoding="utf-8"))
+    bundle = store.path / "generated"
+    cloudformation = bundle / "cloudformation"
+    scripts = bundle / "scripts"
+    cloudformation.mkdir(parents=True, exist_ok=True)
+    scripts.mkdir(parents=True, exist_ok=True)
+
+    selected_templates: list[str] = []
+    for profile in profiles:
+        details = catalog["profiles"][profile]
+        source_relative = details.get("template")
+        if not source_relative:
+            raise ValueError(f"el perfil {profile!r} todavía no tiene una plantilla normalizada")
+        source = TEMPLATE_ROOT / source_relative
+        target = cloudformation / source.name
+        shutil.copyfile(source, target)
+        selected_templates.append(str(Path("cloudformation") / source.name))
+
+    primary_template = selected_templates[0]
+    pipeline = (TEMPLATE_ROOT / catalog["pipeline"]["template"]).read_text(encoding="utf-8")
+    pipeline = pipeline.replace("templates/generated/stack.yml", f"generated/{primary_template}")
+    pipeline = pipeline.replace("./scripts/health-check.sh", "./generated/scripts/health-check-authorize.sh")
+    (bundle / ".gitlab-ci-sysops.yml").write_text(pipeline, encoding="utf-8")
+    shutil.copyfile(TEMPLATE_ROOT / "health-check-authorize.sh", scripts / "health-check-authorize.sh")
+
+    manifest = {
+        "run_id": deployment.run_id,
+        "source_branch": change.branch,
+        "architecture_decision": design.decision,
+        "target_account_id": deployment.target_account_id,
+        "region": deployment.region,
+        "template_profiles": profiles,
+        "cloudformation_templates": selected_templates,
+        "pipeline": ".gitlab-ci-sysops.yml",
+        "health_check": "scripts/health-check-authorize.sh",
+        "required_ci_variables": ["AWS_DEFAULT_REGION", "CF_STACK_NAME", "HEALTHCHECK_URL", "PREVIOUS_APPROVED_TEMPLATE"],
+        "status": "pending_sysops_approval",
+    }
+    (bundle / "manifest.yml").write_text(yaml.safe_dump(manifest, sort_keys=False, allow_unicode=True), encoding="utf-8")
+    store.audit("agente-despliegue", "deployment_bundle_generated", profiles=profiles, bundle=str(bundle))
+    return bundle
 
 
 def create_plan(run_id: str, target_account_id: str, region: str = "us-west-2", base_dir: str = "runs") -> Deployment:
@@ -64,6 +119,7 @@ def create_plan(run_id: str, target_account_id: str, region: str = "us-west-2", 
               "Pendiente de aprobación humana de SysOps. Este agente no ejecuta `cdk deploy`."),
     )
     store.write(deployment, actor="agente-despliegue")
+    bundle = generate_bundle(store, design, change, deployment, profiles)
     store.audit("agente-despliegue", "deployment_plan_created", source_branch=change.branch)
     return deployment
 
