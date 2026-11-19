@@ -1,0 +1,89 @@
+# Modelo GitLab CI basado en la taxonomía corporativa. Configure credenciales como
+# variables masked/protected de GitLab; nunca las agregue a este archivo.
+stages:
+  - test
+  - versionador
+  - build
+  - deploy
+  - deploy_QA
+  - deploy_UAT
+  - deploy_PROD
+
+variables:
+  AWS_DEFAULT_REGION: us-west-2
+  CF_TEMPLATE: templates/generated/stack.yml
+  CF_STACK_NAME: $CI_PROJECT_NAME-$CI_COMMIT_REF_SLUG
+  ARTIFACT_KEY: $CI_PROJECT_NAME/$CI_COMMIT_SHA/auth-service.zip
+
+validate_infra:
+  stage: test
+  script:
+    - aws cloudformation validate-template --template-body file://$CF_TEMPLATE
+  rules:
+    - changes:
+        - templates/generated/**/*
+        - infra/**/*
+
+plan_change_set:
+  stage: versionador
+  script:
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME" --template-file "$CF_TEMPLATE"
+      --no-execute-changeset --capabilities CAPABILITY_NAMED_IAM
+      --parameter-overrides $CF_PARAMETER_OVERRIDES
+  artifacts:
+    when: always
+    expire_in: 7 days
+  needs: [validate_infra, package_lambda]
+
+package_lambda:
+  stage: build
+  script:
+    - test -n "$ARTIFACT_BUCKET"
+    - cd src/auth_service && zip -r ../../auth-service.zip .
+    - aws s3 cp ../../auth-service.zip "s3://$ARTIFACT_BUCKET/$ARTIFACT_KEY"
+    - >-
+      echo "CF_PARAMETER_OVERRIDES=ProjectName=$CI_PROJECT_NAME Environment=$DEPLOY_ENV
+      ArtifactBucket=$ARTIFACT_BUCKET ArtifactKey=$ARTIFACT_KEY" > build.env
+  artifacts:
+    reports:
+      dotenv: build.env
+
+deploy_qa:
+  stage: deploy_QA
+  environment:
+    name: qa
+  script:
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME" --template-file "$CF_TEMPLATE"
+      --capabilities CAPABILITY_NAMED_IAM
+      --parameter-overrides $CF_PARAMETER_OVERRIDES
+    - ./scripts/health-check.sh "$HEALTHCHECK_URL"
+  when: manual
+  needs: [plan_change_set, package_lambda]
+
+deploy_prod:
+  stage: deploy_PROD
+  environment:
+    name: production
+  script:
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME" --template-file "$CF_TEMPLATE"
+      --capabilities CAPABILITY_NAMED_IAM
+      --parameter-overrides $CF_PARAMETER_OVERRIDES
+    - ./scripts/health-check.sh "$HEALTHCHECK_URL"
+  when: manual
+  needs: [plan_change_set, package_lambda]
+
+rollback_prod:
+  stage: deploy_PROD
+  environment:
+    name: production
+  script:
+    - test -n "$PREVIOUS_APPROVED_TEMPLATE"
+    - >-
+      aws cloudformation deploy --stack-name "$CF_STACK_NAME"
+      --template-file "$PREVIOUS_APPROVED_TEMPLATE" --capabilities CAPABILITY_NAMED_IAM
+    - ./scripts/health-check.sh "$HEALTHCHECK_URL"
+  when: manual
+  needs: [deploy_prod]

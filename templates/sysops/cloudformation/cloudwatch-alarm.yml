@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Alarma CloudWatch parametrizada para un recurso aprobado por Arquitectura.
+
+Parameters:
+  AlarmName:
+    Type: String
+  Namespace:
+    Type: String
+  MetricName:
+    Type: String
+  ResourceDimensionName:
+    Type: String
+  ResourceDimensionValue:
+    Type: String
+  Threshold:
+    Type: Number
+  AlarmActionArn:
+    Type: String
+
+Resources:
+  Alarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Ref AlarmName
+      AlarmActions: [!Ref AlarmActionArn]
+      ActionsEnabled: true
+      Namespace: !Ref Namespace
+      MetricName: !Ref MetricName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: !Ref Threshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      Dimensions:
+        - Name: !Ref ResourceDimensionName
+          Value: !Ref ResourceDimensionValue

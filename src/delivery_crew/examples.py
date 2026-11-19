@@ -9,7 +9,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .contracts import Approval, Change, Deployment, Design, Requirement
+from .contracts import Approval, Change, DeployableArtifact, Deployment, DeploymentComponent, DeploymentSpec, Design, Requirement
 from .runs import RunStore
 
 DEMO_RUN_ID = "demo-0001"
@@ -49,6 +49,19 @@ def design(run_id: str = DEMO_RUN_ID, approved: bool = True) -> Design:
         risks=["Costo por escritura en cada solicitud.", "Latencia extra de una llamada a DynamoDB."],
         verdict="aprobado",
         standards_cited=["Permisos mínimos", "Sin datos de tarjeta reales"],
+        deployment_spec=DeploymentSpec(
+            environment="qa",
+            components=[
+                DeploymentComponent(name="auth-api", kind="api_gateway", depends_on=["auth-handler"]),
+                DeploymentComponent(name="auth-handler", kind="lambda", depends_on=["frequency-store"]),
+                DeploymentComponent(name="frequency-store", kind="dynamodb"),
+            ],
+            network_exposure="public",
+            data_classification="synthetic",
+            health_check="POST /authorize: tres 00 y luego 65",
+            rollback_strategy="Restaurar la versión Lambda aprobada previamente y verificar el endpoint.",
+            observability=["CloudWatch logs", "métrica de errores Lambda"],
+        ),
         body="Diagrama y detalle del diseño.",
         approval=_approved("arquitecto") if approved else Approval(),
     )
@@ -63,6 +76,7 @@ def change(run_id: str = DEMO_RUN_ID, approved: bool = True) -> Change:
         files_modified=["services/auth_service/auth_service/rules.py", "services/auth_service/tests/test_auth_rules.py"],
         test_result="passed",
         test_summary="12 pruebas, 12 correctas.",
+        deliverables=[DeployableArtifact(component="auth-handler", kind="zip", source_path="src/auth_service", build_command="zip -r auth-service.zip .", entrypoint="handler.lambda_handler")],
         approval=_approved("desarrollador") if approved else Approval(),
     )
 
