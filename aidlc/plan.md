@@ -100,10 +100,21 @@ Delivery Crew lleva un cambio de requerimiento a despliegue verificado con cuatr
 - Ejecución completa del caso demo con los tres agentes reales.
 - Fallo provocado y rollback demostrado.
 - Medición de tiempo y pasos manuales, y guion ensayado.
-**Dependencies:** Units 02, 03, 04, 05, 06
-**Suggested assignee:** Los tres
+**Dependencies:** Units 02, 03, 04, 05, 06, 08**Suggested assignee:** Los tres
 **Estimated duration:** M
 **Demo checkpoint:** El caso demo corre completo, con aprobaciones, y el servicio desplegado devuelve el código 65.
+
+### Unit 08: Panel de control
+**File:** `aidlc/units/08-panel-control.md`
+**Branch:** `feature/08-panel-control`
+**Description:** Interfaz visual para la presentación: pipeline por etapas, artefactos, botones de aprobación, auditoría y métricas.
+**Key deliverables:**
+- API local (FastAPI) sobre `RunStore` y datos de ejemplo (hecho, ver `docs/api.md`).
+- Front en React con vista de pipeline, detalle de artefactos y compuertas de aprobación.
+**Dependencies:** Unit 01
+**Suggested assignee:** Desarrollador (API y front)
+**Estimated duration:** M
+**Demo checkpoint:** Con los datos de ejemplo se puede aprobar el diseño desde la pantalla y ver el siguiente paso habilitarse.
 
 ---
 
@@ -142,6 +153,7 @@ Desarrollador        Arquitecto            Sysops
 | 2 | 03 Agente Arquitecto | Arquitecto | 02, 05, 06 | Unit 01 en main |
 | 2 | 05 Agente Despliegue | Sysops | 02, 03, 06 | Unit 01 en main |
 | 2 | 06 Orquestador | Arquitecto | 02, 05 | Unit 01 en main |
+| 2 | 08 Panel de control | Desarrollador | 02, 03, 05, 06 | Unit 01 en main (la API ya está hecha) |
 | 3 | 04 Agente Desarrollador | Desarrollador | 03, 05, 06 si siguen en curso | Unit 02 en main |
 | 4 | 07 Integración | Los tres | N/A | Units 02 a 06 en main |
 

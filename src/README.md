@@ -11,6 +11,7 @@ Código del proyecto. Paquete Python `delivery_crew` (Python 3.11 o superior).
 | `delivery_crew/bedrock.py` | Modelo y región de Bedrock (por entorno, sin IDs de cuenta). `get_strands_model()` para crear agentes de Strands. |
 | `delivery_crew/check_env.py` | Comprobación de entorno en la cuenta activa. |
 | `delivery_crew/examples.py` | Artefactos de ejemplo del caso demo. |
+| `delivery_crew/api/` | API del panel (FastAPI): `service.py` (lógica), `app.py` (rutas), `samples.py` (ejecuciones de ejemplo). Ver `docs/api.md`. |
 
 Pendiente (otras unidades): `agents/`, `orchestrator/` y `auth_service/`.
 
