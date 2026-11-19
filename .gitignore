@@ -1,0 +1,26 @@
+# Secretos y credenciales
+.env
+.env.*
+*.pem
+*.key
+credentials
+.aws/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / CDK
+node_modules/
+cdk.out/
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Ejecuciones locales de agentes
+runs/
