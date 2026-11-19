@@ -21,7 +21,7 @@ priority: medium
 ## Cuentas AWS
 - Cada integrante tiene una cuenta AWS temporal distinta. Las credenciales se obtienen en Workshop Studio y se cargan como variables de entorno de cada persona.
 - Desarrollo y pruebas: cada uno en su cuenta.
-- Despliegue para la presentación: se hace en una sola cuenta (`cuenta de despliegue`, por definir). Solo el sysops ejecuta ese despliegue.
+- Despliegue para la presentación: se hace en una sola cuenta, la del arquitecto de soluciones (cuenta de despliegue). El sysops prepara y ejecuta el despliegue con las credenciales de esa cuenta, y el arquitecto las provee.
 - Los recursos de AWS no se comparten entre cuentas. Los artefactos entre agentes viajan por Git (carpeta `runs/` o ramas), no por S3 ni DynamoDB de otra cuenta.
 - La infraestructura como código no debe tener IDs de cuenta fijos. Se parametriza la cuenta y la región para poder desplegar en cualquiera.
 
