@@ -46,6 +46,7 @@ def test_valid_design_is_written_with_diagram_and_cited_standards(store):
             verdict="aprobado",
             standards_cited=["ARQ-03", "ARQ-04"],
             diagram_mermaid="flowchart LR\n  A[auth-service] --> B[(DynamoDB TTL)]",
+            deployment_spec=examples.design().deployment_spec,
         )
 
     path = generate_design("run-1", store.path.parent, agent_fn=fake_agent)
@@ -58,6 +59,8 @@ def test_valid_design_is_written_with_diagram_and_cited_standards(store):
 
     content = path.read_text(encoding="utf-8")
     assert "```mermaid" in content
+    # El deployment_spec llega al artefacto (lo necesitan Desarrollo y SysOps).
+    assert design.deployment_spec == examples.design().deployment_spec
 
 
 def test_forced_violation_is_rejected_citing_the_standard(store):
@@ -116,3 +119,105 @@ def test_verdict_without_standards_or_questions_is_rejected_by_the_schema():
             decision="y" * 20,
             verdict="rechazado",
         )
+
+
+# --- deployment_spec ---------------------------------------------------------
+
+def _approved(**overrides):
+    base = dict(
+        summary="Contador por card_token en DynamoDB",
+        components=["auth-service", "DynamoDB"],
+        decision="Ventana fija por minuto en DynamoDB.",
+        verdict="aprobado",
+        standards_cited=["ARQ-03"],
+        deployment_spec=examples.design().deployment_spec.model_dump(),
+    )
+    base.update(overrides)
+    return base
+
+
+def _spec(**changes):
+    spec = examples.design().deployment_spec.model_dump()
+    spec.update(changes)
+    return spec
+
+
+def test_approved_design_requires_deployment_spec():
+    with pytest.raises(ValueError, match="debe incluir deployment_spec"):
+        DesignProposal(**_approved(deployment_spec=None))
+
+
+def test_non_approved_design_may_omit_deployment_spec():
+    p = DesignProposal(**_approved(verdict="observaciones", open_questions=["¿Qué tabla?"], deployment_spec=None))
+    assert p.deployment_spec is None
+
+
+def test_unsupported_component_kind_is_rejected():
+    comps = _spec()["components"] + [{"name": "ledger", "kind": "rds", "depends_on": [], "configuration": {}}]
+    with pytest.raises(ValueError, match="sin plantilla homologada: rds"):
+        DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
+
+
+def test_dangling_dependency_is_rejected():
+    comps = _spec()["components"]
+    comps[0]["depends_on"] = ["no-existe"]
+    with pytest.raises(ValueError, match="componentes inexistentes: no-existe"):
+        DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
+
+
+def test_null_lists_from_the_model_are_accepted_as_empty():
+    p = DesignProposal(**_approved(open_questions=None, risks=None))
+    assert p.open_questions == [] and p.risks == []
+
+
+def test_dependency_cycle_is_rejected():
+    """Caso visto con Bedrock real: la lambda dependía de la API y la API de la lambda."""
+    comps = _spec()["components"]
+    for c in comps:
+        if c["kind"] == "lambda":
+            c["depends_on"] = ["frequency-store", "auth-api"]
+    with pytest.raises(ValueError, match="ciclo: auth-api -> auth-handler -> auth-api"):
+        DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
+
+
+def test_find_cycle_examples():
+    from delivery_crew.agents.architect import _find_cycle
+
+    assert _find_cycle({"a": ["b"], "b": ["c"], "c": []}) is None
+    assert _find_cycle({"a": ["a"]}) == ["a", "a"]
+    assert _find_cycle({"a": ["b"], "b": ["c"], "c": ["a"]}) == ["a", "b", "c", "a"]
+    assert _find_cycle({"x": [], "a": ["b"], "b": ["x", "a"]}) == ["a", "b", "a"]
+
+
+def test_duplicate_component_names_are_rejected():
+    comps = _spec()["components"]
+    comps.append(dict(comps[0]))
+    with pytest.raises(ValueError, match="repetidos"):
+        DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
+
+
+def test_dynamodb_must_declare_key_names():
+    comps = _spec()["components"]
+    for c in comps:
+        if c["kind"] == "dynamodb":
+            c["configuration"] = {"partition_key": "pk"}
+    with pytest.raises(ValueError, match="debe declarar en configuration: ttl_attribute"):
+        DesignProposal(**_approved(deployment_spec=_spec(components=comps)))
+
+
+def test_unknown_standard_id_is_rejected():
+    with pytest.raises(ValueError, match="no existen: ARQ-99"):
+        DesignProposal(**_approved(standards_cited=["ARQ-03", "ARQ-99"]))
+
+
+def test_prompt_lists_supported_kinds_and_configuration_keys():
+    from delivery_crew.agents.architect import SYSTEM_PROMPT_TEMPLATE, deployment_rules
+
+    rules = deployment_rules()
+    for kind in ("api_gateway", "lambda", "dynamodb"):
+        assert kind in rules
+    for kind, key in (("dynamodb", "partition_key"), ("dynamodb", "ttl_attribute"), ("lambda", "FREQUENCY_STORE")):
+        assert f"en componentes `{kind}`, clave `{key}` (sin prefijo)" in rules
+    assert "ecs" not in rules.split("homologada:")[1].split(".")[0]  # perfil pendiente, no se ofrece
+    rendered = SYSTEM_PROMPT_TEMPLATE.format(standards="S", deployment_rules=rules)
+    assert "deployment_spec" in rendered

@@ -16,18 +16,81 @@ resto de la lógica sin red ni credenciales (ver `tests/test_architect.py`).
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Callable
 
-from pydantic import BaseModel, Field, model_validator
+import yaml
+from pydantic import BaseModel, Field, field_validator, model_validator
 from strands import Agent
 
 from ..bedrock import get_strands_model
-from ..contracts import Design, Requirement, Verdict
+from ..contracts import DeploymentSpec, Design, Requirement, Verdict
+from ..conventions import CONFIGURATION_KEYS
 from ..runs import RunStore
 
 ACTOR = "agente-arquitecto"
-STANDARDS_DIR = Path(__file__).resolve().parents[3] / "docs" / "estandares"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+STANDARDS_DIR = REPO_ROOT / "docs" / "estandares"
+CATALOG_PATH = REPO_ROOT / "templates" / "sysops" / "catalog.yml"
+
+# Significado de cada clave de configuración, para explicarla en el prompt.
+CONFIGURATION_HELP = {
+    ("dynamodb", "partition_key"): "nombre del atributo clave de partición (String)",
+    ("dynamodb", "ttl_attribute"): "nombre del atributo TTL (Number, epoch en segundos)",
+    ("lambda", "FREQUENCY_STORE"): "implementación del contador: 'dynamodb' en AWS, 'memory' solo en pruebas",
+}
+# Configuración obligatoria en un diseño aprobado: sin estos nombres, código e
+# infraestructura pueden no coincidir.
+REQUIRED_CONFIGURATION = {"dynamodb": {"partition_key", "ttl_attribute"}}
+
+
+def _find_cycle(graph: dict[str, list[str]]) -> list[str] | None:
+    """Devuelve un ciclo de dependencias (ej. ['a', 'b', 'a']) o None."""
+    state: dict[str, int] = {}  # 1 = en curso, 2 = terminado
+    path: list[str] = []
+
+    def visit(node: str) -> list[str] | None:
+        state[node] = 1
+        path.append(node)
+        for dep in graph.get(node, []):
+            if state.get(dep) == 1:
+                return path[path.index(dep):] + [dep]
+            if dep not in state:
+                found = visit(dep)
+                if found:
+                    return found
+        path.pop()
+        state[node] = 2
+        return None
+
+    for node in graph:
+        if node not in state:
+            found = visit(node)
+            if found:
+                return found
+    return None
+
+
+def known_standard_ids() -> set[str]:
+    """Ids ARQ-NN definidos en docs/estandares/ (sin el README)."""
+    ids: set[str] = set()
+    for path in STANDARDS_DIR.glob("*.md"):
+        if path.name != "README.md":
+            ids.update(re.findall(r"\bARQ-\d{2}\b", path.read_text(encoding="utf-8")))
+    return ids
+
+
+def supported_kinds() -> set[str]:
+    """Tipos de componente con plantilla homologada en el catálogo de SysOps."""
+    if not CATALOG_PATH.is_file():
+        return set()
+    catalog = yaml.safe_load(CATALOG_PATH.read_text(encoding="utf-8")) or {}
+    kinds: set[str] = set()
+    for profile in (catalog.get("profiles") or {}).values():
+        if profile.get("status", "ready") == "ready" and profile.get("template"):
+            kinds.update(profile.get("capabilities", []))
+    return kinds
 
 
 # --- Esquema de la respuesta del modelo ------------------------------------
@@ -53,6 +116,19 @@ class DesignProposal(BaseModel):
     diagram_mermaid: str | None = Field(
         default=None, description="Diagrama Mermaid del cambio puntual, o None si hay open_questions"
     )
+    deployment_spec: DeploymentSpec | None = Field(
+        default=None,
+        description=(
+            "Infraestructura que SysOps debe crear. Obligatoria si verdict='aprobado'; "
+            "null si el diseño no se puede aprobar."
+        ),
+    )
+
+    @field_validator("risks", "standards_cited", "open_questions", mode="before")
+    @classmethod
+    def _null_list_is_empty(cls, value):
+        # El modelo a veces envía null en listas opcionales; equivale a lista vacía.
+        return [] if value is None else value
 
     @model_validator(mode="after")
     def _verdict_needs_support(self) -> "DesignProposal":
@@ -61,6 +137,56 @@ class DesignProposal(BaseModel):
                 "un veredicto distinto de 'aprobado' debe citar estándares (standards_cited) "
                 "o dejar preguntas abiertas (open_questions)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _standards_must_exist(self) -> "DesignProposal":
+        known = known_standard_ids()
+        unknown = sorted(set(self.standards_cited) - known) if known else []
+        if unknown:
+            raise ValueError(
+                f"standards_cited incluye estándares que no existen: {', '.join(unknown)}; "
+                f"válidos: {', '.join(sorted(known))}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _approved_design_is_deployable(self) -> "DesignProposal":
+        if self.verdict != "aprobado":
+            return self
+        spec = self.deployment_spec
+        if spec is None:
+            raise ValueError(
+                "un diseño con verdict='aprobado' debe incluir deployment_spec; si no se puede "
+                "declarar la infraestructura, use verdict='observaciones' con open_questions"
+            )
+        kinds = supported_kinds()
+        unsupported = sorted({c.kind for c in spec.components} - kinds) if kinds else []
+        if unsupported:
+            raise ValueError(
+                f"deployment_spec usa tipos sin plantilla homologada: {', '.join(unsupported)}; "
+                f"tipos disponibles: {', '.join(sorted(kinds))}. Si el cambio los necesita, "
+                "use verdict='observaciones' y pregúntelo en open_questions"
+            )
+        names = [c.name for c in spec.components]
+        if len(names) != len(set(names)):
+            raise ValueError("deployment_spec tiene nombres de componente repetidos")
+        dangling = sorted({d for c in spec.components for d in c.depends_on} - set(names))
+        if dangling:
+            raise ValueError(f"depends_on referencia componentes inexistentes: {', '.join(dangling)}")
+        cycle = _find_cycle({c.name: list(c.depends_on) for c in spec.components})
+        if cycle:
+            raise ValueError(
+                f"depends_on forma un ciclo: {' -> '.join(cycle)}. depends_on indica qué debe existir "
+                "antes (ej. la lambda depende de la tabla; la API depende de la lambda), nunca en ambos sentidos"
+            )
+        for component in spec.components:
+            missing = sorted(REQUIRED_CONFIGURATION.get(component.kind, set()) - set(component.configuration))
+            if missing:
+                raise ValueError(
+                    f"el componente {component.name} ({component.kind}) debe declarar en configuration: "
+                    f"{', '.join(missing)}"
+                )
         return self
 
 
@@ -92,6 +218,48 @@ diseño técnico evaluado contra la base de estándares del equipo.
    el por qué en `decision`.
 4. Nunca propongas guardar PAN, CVV ni datos reales de tarjetas, ni \
    saltar la aprobación humana de ningún paso del flujo.
+
+{deployment_rules}
+"""
+
+
+def deployment_rules() -> str:
+    """Instrucciones sobre deployment_spec, generadas desde conventions.py y el catálogo de SysOps."""
+    kinds = sorted(supported_kinds())
+    config_lines = []
+    for kind, keys in sorted(CONFIGURATION_KEYS.items()):
+        for key in sorted(keys):
+            config_lines.append(
+                f"   - en componentes `{kind}`, clave `{key}` (sin prefijo): {CONFIGURATION_HELP.get((kind, key), '')}"
+            )
+    required = "; ".join(f"`{k}` debe declarar {', '.join(sorted(v))}" for k, v in REQUIRED_CONFIGURATION.items())
+    return f"""\
+# Especificación de despliegue (`deployment_spec`)
+
+SysOps genera la infraestructura solo a partir de `deployment_spec`, y el agente \
+Desarrollador escribe el código con los nombres que declares acá. Si no coinciden, \
+el servicio falla en AWS aunque las pruebas pasen.
+
+5. Si verdict="aprobado", `deployment_spec` es obligatorio. Si no puedes \
+   declarar la infraestructura, usa verdict="observaciones" con open_questions.
+6. `components[].kind` solo puede ser uno de estos tipos con plantilla \
+   homologada: {', '.join(kinds) or '(catálogo no disponible)'}. Si el cambio \
+   necesita otro tipo, usa verdict="observaciones" y pregúntalo.
+7. Declara cada recurso como un componente con nombre corto en kebab-case \
+   (ej. "auth-api", "auth-handler", "frequency-store") y relaciónalos con \
+   `depends_on` usando esos nombres. `depends_on` indica qué debe existir \
+   antes: la lambda depende de la tabla y la API depende de la lambda. \
+   Nunca declares una dependencia en ambos sentidos.
+8. `configuration` solo admite estas claves (valores con letras, números, \
+   "_", "." o "-"):
+{chr(10).join(config_lines)}
+   Reglas: {required}. Una lambda que use una tabla DynamoDB declara \
+   `FREQUENCY_STORE=dynamodb`.
+9. `data_classification` es "synthetic" para auth-service (no hay datos \
+   reales). `environment` es "qa" salvo que el requerimiento diga otra cosa. \
+   `health_check` describe la verificación observable tras desplegar; \
+   `rollback_strategy`, cómo volver a la versión anterior; `observability`, \
+   qué logs o métricas se revisan.
 """
 
 
@@ -126,7 +294,7 @@ def _invoke_agent(prompt: str, *, fast: bool = False) -> DesignProposal:
     `agent_fn` de `generate_design` para pruebas sin red."""
     agent = Agent(
         model=get_strands_model(fast=fast),
-        system_prompt=SYSTEM_PROMPT_TEMPLATE.format(standards=load_standards()),
+        system_prompt=SYSTEM_PROMPT_TEMPLATE.format(standards=load_standards(), deployment_rules=deployment_rules()),
     )
     result = agent(prompt, structured_output_model=DesignProposal)
     if result.structured_output is None:
@@ -147,6 +315,7 @@ def _build_design(requirement: Requirement, proposal: DesignProposal) -> Design:
         verdict=proposal.verdict,
         standards_cited=proposal.standards_cited,
         open_questions=proposal.open_questions,
+        deployment_spec=proposal.deployment_spec,
         body=body,
     )
 

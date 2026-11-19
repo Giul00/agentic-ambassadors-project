@@ -33,6 +33,14 @@ def test_demo_case_code_65_produces_a_valid_design(tmp_path):
 
     assert design.verdict in {"aprobado", "observaciones"}
     assert design.approval.status == "pendiente"
+    if design.verdict == "aprobado":
+        spec = design.deployment_spec
+        assert spec is not None, "un diseño aprobado debe declarar deployment_spec"
+        print(f"deployment_spec: {spec.model_dump_json(indent=2)}")
+        kinds = {c.kind for c in spec.components}
+        assert {"lambda", "dynamodb"} <= kinds
+        table = next(c for c in spec.components if c.kind == "dynamodb")
+        assert {"partition_key", "ttl_attribute"} <= set(table.configuration)
 
 
 def test_requirement_asking_to_store_the_pan_is_rejected(tmp_path):

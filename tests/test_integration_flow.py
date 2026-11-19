@@ -104,6 +104,51 @@ def test_developer_output_is_accepted_by_deployment_agent(repo, tmp_path):
     assert "FrequencyPartitionKey=pk" in deployment.body
 
 
+# --- Arquitecto -> Desarrollo -> Despliegue ------------------------------------
+
+def test_full_chain_carries_architect_names_to_code_prompt_and_template(repo, tmp_path):
+    from delivery_crew.agents.architect import DesignProposal, generate_design
+
+    runs = tmp_path / "runs"
+    store = RunStore("cadena", runs).create()
+    store.write(examples.requirement("cadena"), actor="orquestador")
+
+    # Nombres distintos de los valores por defecto, para probar que viajan de verdad.
+    spec = examples.design().deployment_spec.model_dump()
+    for c in spec["components"]:
+        if c["kind"] == "dynamodb":
+            c["configuration"] = {"partition_key": "token_window", "ttl_attribute": "expira"}
+    proposal = DesignProposal(
+        summary="Contador por card_token en DynamoDB con ventana fija.",
+        components=["auth-service", "DynamoDB"],
+        decision="Ventana fija por minuto con clave token_window.",
+        verdict="aprobado",
+        standards_cited=["ARQ-03", "ARQ-04"],
+        deployment_spec=spec,
+    )
+    generate_design("cadena", runs, agent_fn=lambda prompt: proposal)
+    store.decide(Design, "aprobado", by="arquitecto")
+
+    captured = {}
+
+    def factory(sandbox):
+        captured["agent"] = writing_agent(sandbox)
+        return captured["agent"]
+
+    run_developer(store, repo, agent_factory=factory)
+    prompt = captured["agent"].prompt
+    assert "'token_window'" in prompt and "'expira'" in prompt
+
+    store.decide(Change, "aprobado", by="tomas")
+    create_plan("cadena", "123456789012", base_dir=str(runs))
+    manifest = yaml.safe_load((store.path / "generated" / "manifest.yml").read_text(encoding="utf-8"))
+    assert manifest["parameter_overrides"]["FrequencyPartitionKey"] == "token_window"
+    assert manifest["parameter_overrides"]["FrequencyTtlAttribute"] == "expira"
+
+    actors = [e["actor"] for e in store.read_audit() if e["action"] == "artifact_written"]
+    assert actors[:4] == ["orquestador", "agente-arquitecto", "arquitecto", "agente-desarrollador"]
+
+
 # --- Coherencia de la plantilla ----------------------------------------------
 
 def test_every_override_is_a_template_parameter():
