@@ -13,6 +13,12 @@ files_modified:
 - services/auth_service/tests/test_auth_rules.py
 test_result: passed
 test_summary: 12 pruebas, 12 correctas.
+deliverables:
+- component: auth-handler
+  kind: zip
+  source_path: services/auth_service
+  build_command: python -m zipfile -c auth-service.zip auth_service
+  entrypoint: auth_service.handler.lambda_handler
 ---
 
 

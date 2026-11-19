@@ -12,19 +12,23 @@ Uso:
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
 import textwrap
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
-from ..contracts import Change, Design, Requirement
+from ..contracts import Change, DeployableArtifact, Design, Requirement
+from ..conventions import TABLE_ENV, build_command, lambda_entrypoint, service_dir
+from ..workspace import CodeLocation, WorkspaceError, locate, merge_pull_request, push_and_open_pr
 from ..runs import NotApprovedError, RunStore
+from .narration import Narrator
 from .sandbox import Sandbox, SandboxError, TestRun
 
 ACTOR = "agente-desarrollador"
-SERVICE_DIR = "services/auth_service"
 WORKTREES_DIR = ".worktrees"
 MAX_DIFF_CHARS = 30_000
 GIT_AUTHOR = ["-c", "user.name=Agente Desarrollador", "-c", "user.email=agente-desarrollador@delivery-crew.local"]
@@ -40,24 +44,37 @@ class DeveloperError(RuntimeError):
 
 SYSTEM_PROMPT = textwrap.dedent("""
     Eres el agente Desarrollador de Delivery Crew, en una empresa de adquirencia de pagos.
-    Implementas cambios en el servicio auth-service siguiendo un diseño ya aprobado por el arquitecto.
+    Implementas cambios en un servicio siguiendo un diseño ya aprobado por el arquitecto.
 
     Herramientas: list_files, read_file, write_file y run_tests. Las rutas son relativas a la
-    carpeta del servicio (por ejemplo, "auth_service/rules.py" o "tests/test_auth_rules.py").
+    carpeta del servicio (por ejemplo, "<paquete>/handler.py" o "tests/test_nuevo.py").
 
     Reglas obligatorias:
-    1. Antes de escribir, lee los archivos relevantes (al menos README.md, auth_service/rules.py,
-       auth_service/models.py, auth_service/handler.py y las pruebas existentes).
+    1. Antes de escribir, usa list_files y lee los archivos relevantes: al menos README.md, todos los
+       módulos del paquete y las pruebas existentes.
     2. Implementa solo lo que pide el diseño y el requerimiento. No cambies el comportamiento existente
        que no esté relacionado.
     3. Escribe al menos una prueba por cada criterio de aceptación, más los casos borde.
     4. Las pruebas no pueden usar AWS ni red. Si el diseño usa un servicio de AWS (por ejemplo DynamoDB),
        define una interfaz, una implementación en memoria para pruebas y otra con boto3 para producción,
-       y elige la implementación por variable de entorno. Importa boto3 solo dentro de la implementación real.
+       y elige la implementación por variable de entorno. Importa boto3 solo dentro de la implementación real
+       (boto3 ya viene en el runtime de Lambda: no agregues dependencias ni archivos requirements).
+       Si el servicio ya tiene puertos y adaptadores, agrega el adaptador nuevo detrás del puerto existente,
+       regístralo donde se eligen los adaptadores y no cambies el dominio ni los casos de uso.
+       La implementación real también se prueba: con un cliente o tabla falsos en memoria que simulen las
+       operaciones que usas (incluidas las condiciones), sin red.
     5. Nada de datos reales de tarjetas ni secretos en el código.
     6. write_file reemplaza el archivo completo: escribe siempre el contenido entero.
-    7. Ejecuta run_tests y corrige hasta que todas las pruebas pasen.
-    8. Al terminar responde, en español y en pocas líneas: qué cambiaste, qué archivos, qué variables
+    7. Ejecuta run_tests y corrige hasta que todas las pruebas pasen. Las pruebas existentes no se pueden
+       modificar: fijan el comportamiento actual. Si tu cambio rompe una, corrige el código.
+    8. No cambies el contrato HTTP del servicio (rutas, códigos de estado, formato de las respuestas,
+       mensajes) salvo que el requerimiento lo pida. En auth-service, un rechazo de negocio (cualquier
+       response_code distinto de 00) responde HTTP 200 con approved=false.
+    9. Si implementas una ventana de tiempo, pruébala con un reloj simulado en ambas implementaciones,
+       incluido el caso de solicitudes espaciadas por debajo del límite, que nunca deben rechazarse aunque
+       se sostengan en el tiempo. Renovar el vencimiento en cada solicitud convierte la ventana en un
+       bloqueo permanente: evítalo.
+    10. Al terminar responde, en español y en pocas líneas: qué cambiaste, qué archivos, qué variables
        de entorno o recursos de infraestructura nuevos necesita el despliegue, y el resultado de las pruebas.
 """).strip()
 
@@ -72,13 +89,38 @@ def _git(cwd: Path, *args: str, check: bool = True) -> str:
     return proc.stdout
 
 
-def branch_name(run_id: str) -> str:
-    return f"agente/{run_id}"
+def _slug(text: str, limit: int) -> str:
+    ascii_text = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")[:limit].strip("-")
 
 
-def create_worktree(repo: Path, run_id: str, fresh: bool = False, base: str = "HEAD") -> tuple[Path, str]:
-    path = repo / WORKTREES_DIR / run_id
-    branch = branch_name(run_id)
+def branch_name(requester: str, title: str) -> str:
+    """Convención de ramas: feature/{solicitante}-{detalle}, en minúsculas y sin acentos."""
+    return f"feature/{_slug(requester, 20) or 'agente'}-{_slug(title, 40) or 'cambio'}"
+
+
+def unique_branch(base: str, repo: Path, location: CodeLocation | None = None) -> str:
+    """Si la rama ya existe (en el repo local o en GitHub), agrega -2, -3... para no pisar otra ejecución."""
+    existing = {b.strip().lstrip("*+ ").strip() for b in _git(repo, "branch", "--list", f"{base}*").splitlines()}
+    if location is not None and location.repo is not None:
+        try:
+            from ..workspace import git as ws_git
+
+            heads = ws_git(None, "ls-remote", "--heads", location.repo.url, auth=True)
+            existing |= {line.split("refs/heads/", 1)[1] for line in heads.splitlines() if "refs/heads/" in line}
+        except WorkspaceError:
+            pass  # sin red o sin acceso: alcanza con la verificación local
+    name, n = base, 2
+    while name in existing:
+        name, n = f"{base}-{n}", n + 1
+    return name
+
+
+def create_worktree(repo: Path, run_id: str, fresh: bool = False, base: str = "HEAD",
+                    path: Path | None = None, branch: str | None = None) -> tuple[Path, str]:
+    repo = Path(repo).resolve()  # git resuelve rutas relativas desde el repo: siempre absolutas
+    path = (path or repo / WORKTREES_DIR / run_id).resolve()
+    branch = branch or f"feature/agente-{_slug(run_id, 40)}"
     branch_exists = bool(_git(repo, "branch", "--list", branch).strip())
     if fresh:
         if path.exists():
@@ -97,8 +139,8 @@ def create_worktree(repo: Path, run_id: str, fresh: bool = False, base: str = "H
     return path, branch
 
 
-def stage_and_diff(worktree: Path) -> tuple[list[str], str]:
-    _git(worktree, "add", "-A", "--", SERVICE_DIR)
+def stage_and_diff(worktree: Path, service_path: str) -> tuple[list[str], str]:
+    _git(worktree, "add", "-A", "--", service_path)
     names = [n for n in _git(worktree, "diff", "--cached", "--name-only").splitlines() if n.strip()]
     diff = _git(worktree, "diff", "--cached", "--stat") + "\n" + _git(worktree, "diff", "--cached")
     return names, diff
@@ -106,7 +148,53 @@ def stage_and_diff(worktree: Path) -> tuple[list[str], str]:
 
 # --- prompt ----------------------------------------------------------------
 
-def build_prompt(req: Requirement, design: Design, feedback: str | None = None) -> str:
+def deployment_section(design: Design, entrypoint: str) -> str:
+    """Restricciones de infraestructura que el código debe respetar al pie de la letra."""
+    spec = design.deployment_spec
+    if spec is None:
+        return ""
+    lines = [
+        "## Especificación de despliegue de Arquitectura (obligatoria)",
+        "La infraestructura se genera con estos valores exactos. Si tu código usa otros nombres, "
+        "fallará en AWS aunque las pruebas pasen.",
+    ]
+    for comp in spec.components:
+        config = ", ".join(f"{k}={v}" for k, v in sorted(comp.configuration.items())) or "sin configuración"
+        lines.append(f"- {comp.name} ({comp.kind}): {config}")
+        if comp.kind == "dynamodb":
+            if "partition_key" in comp.configuration:
+                lines.append(f"  - La clave de partición de la tabla se llama exactamente "
+                             f"'{comp.configuration['partition_key']}' (tipo String).")
+            if "ttl_attribute" in comp.configuration:
+                lines.append(f"  - El atributo TTL se llama exactamente '{comp.configuration['ttl_attribute']}' "
+                             "(Number, epoch en segundos).")
+            lines.append(f"  - El nombre de la tabla llega en la variable de entorno {TABLE_ENV}.")
+            lines.append("  - El rol de la Lambda tiene permiso de dynamodb:GetItem, PutItem, UpdateItem, DeleteItem, Query y Scan sobre esa tabla.")
+        if comp.kind == "lambda":
+            for key, value in sorted(comp.configuration.items()):
+                lines.append(f"  - La Lambda recibe la variable de entorno {key}={value}.")
+            lines.append(f"  - Handler: {entrypoint}.")
+    return "\n".join(lines)
+
+
+def build_deliverables(design: Design, service: str = "auth-service",
+                       location: CodeLocation | None = None) -> list[DeployableArtifact]:
+    """Un zip del servicio por cada componente Lambda del diseño. Valores fijos, no del modelo."""
+    if design.deployment_spec is None:
+        return []
+    if location is not None:
+        source, entry = location.service_path, f"{location.package}.handler.lambda_handler"
+        command = f"python -m zipfile -c {location.package}.zip {location.package}"
+    else:
+        source, entry, command = service_dir(service), lambda_entrypoint(service), build_command(service)
+    return [
+        DeployableArtifact(component=comp.name, kind="zip", source_path=source, build_command=command, entrypoint=entry)
+        for comp in design.deployment_spec.components if comp.kind == "lambda"
+    ]
+
+
+def build_prompt(req: Requirement, design: Design, feedback: str | None = None,
+                 entrypoint: str | None = None) -> str:
     criteria = "\n".join(f"- {c}" for c in req.acceptance_criteria)
     components = "\n".join(f"- {c}" for c in design.components)
     risks = "\n".join(f"- {r}" for r in design.risks) or "- (ninguno)"
@@ -118,7 +206,7 @@ def build_prompt(req: Requirement, design: Design, feedback: str | None = None) 
             "Tu implementación debe resolverlo explícitamente y cubrirlo con pruebas:\n"
             f"> {feedback}"
         )
-    return textwrap.dedent(f"""
+    prompt = textwrap.dedent(f"""
         Implementa este cambio en {req.affected_service}.
 
         ## Requerimiento: {req.title}
@@ -136,7 +224,11 @@ def build_prompt(req: Requirement, design: Design, feedback: str | None = None) 
         {risks}
 
         {design.body}
-    """).strip() + review
+    """).strip()
+    infra = deployment_section(design, entrypoint or lambda_entrypoint(req.affected_service))
+    if infra:
+        prompt += "\n\n" + infra
+    return prompt + review
 
 
 def retry_prompt(result: TestRun) -> str:
@@ -179,7 +271,7 @@ def strands_agent_factory(sandbox: Sandbox) -> AgentFn:
         """Crea o reemplaza por completo un archivo del servicio.
 
         Args:
-            path: ruta relativa a la carpeta del servicio, por ejemplo auth_service/frequency.py
+            path: ruta relativa a la carpeta del servicio, por ejemplo mi_paquete/adapters/nuevo.py
             content: contenido completo del archivo
         """
         return guard(lambda: f"escrito: {sandbox.write_file(path, content)}")
@@ -191,14 +283,22 @@ def strands_agent_factory(sandbox: Sandbox) -> AgentFn:
         status = "PASAN" if result.passed else "FALLAN"
         return f"{status}: {result.summary}\n\n{result.output[-4000:]}"
 
+    narrator = Narrator(lambda text: sandbox.emit("agent_message", {"text": text}))
     agent = Agent(
         model=get_strands_model(max_tokens=16000, temperature=0.2),
         tools=[list_files, read_file, write_file, run_tests],
         system_prompt=SYSTEM_PROMPT,
-        callback_handler=None,
+        callback_handler=narrator,
         name="agente-desarrollador",
     )
-    return lambda prompt: str(agent(prompt)).strip()
+
+    def run(prompt: str) -> str:
+        try:
+            return str(agent(prompt)).strip()
+        finally:
+            narrator.flush()
+
+    return run
 
 
 # --- flujo -----------------------------------------------------------------
@@ -217,8 +317,20 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
         raise DeveloperError("esta ejecución ya tiene 03-cambio.md; use --fresh para repetir")
     feedback = previous.approval.reason if previous and previous.approval.status == "rechazado" else None
 
-    store.audit(ACTOR, "developer_started", feedback=feedback)
-    worktree, branch = create_worktree(repo, store.run_id, fresh=fresh)
+    try:
+        location = locate(req, store.path, repo)
+    except (WorkspaceError, ValueError) as exc:
+        raise DeveloperError(str(exc)) from exc
+    store.audit(ACTOR, "developer_started", feedback=feedback,
+                source=location.repo.web_url if location.repo else location.service_path)
+    _exclude_worktrees(location.root)
+    if previous is not None:
+        branch = previous.branch  # el reintento actualiza la misma rama y el mismo PR
+    else:
+        requester = req.approval.by if req.approval.status == "aprobado" and req.approval.by else "agente"
+        branch = unique_branch(branch_name(requester, req.title), location.root, location)
+    worktree, branch = create_worktree(location.root, store.run_id, fresh=fresh,
+                                       path=_worktree_path(store, location), branch=branch)
     log(f"Copia de trabajo: {worktree} (rama {branch})")
 
     def on_event(action: str, details: dict) -> None:
@@ -228,10 +340,14 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
         elif action == "tool_run_tests":
             log(f"  pruebas: {details['summary']}")
 
-    sandbox = Sandbox(worktree, SERVICE_DIR, on_event=on_event)
+    service_path = location.service_path
+    if not (worktree / service_path).is_dir():
+        raise DeveloperError(f"no existe el código del servicio {req.affected_service!r} en {service_path}")
+    sandbox = Sandbox(worktree, service_path, on_event=on_event)
+    entrypoint = f"{location.package}.handler.lambda_handler"
     agent = agent_factory(sandbox)
 
-    prompt = build_prompt(req, design, feedback)
+    prompt = build_prompt(req, design, feedback, entrypoint)
     if feedback:
         log(f"Incluye el motivo del rechazo anterior: {feedback}")
     summaries: list[str] = []
@@ -245,14 +361,24 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
             break
         prompt = retry_prompt(result)
 
-    files, diff = stage_and_diff(worktree)
+    files, diff = stage_and_diff(worktree, service_path)
     if not files:
         store.audit(ACTOR, "developer_failed", reason="el agente no modificó archivos")
         raise DeveloperError("el agente no modificó ningún archivo")
 
+    pr_url = None
     if result.passed:
         _git(worktree, *GIT_AUTHOR, "commit", "-q", "-m", f"{req.title} ({store.run_id})")
-        if push:
+        if location.repo is not None:
+            try:
+                pr_url = push_and_open_pr(location, worktree, branch, title=f"[Delivery Crew] {req.title}",
+                                          body=_pr_body(req, design, summaries[-1], result.summary))
+                store.audit(ACTOR, "pull_request_opened", url=pr_url, branch=branch)
+                log(f"Pull request: {pr_url}")
+            except WorkspaceError as exc:
+                store.audit(ACTOR, "pull_request_skipped", reason=str(exc))
+                log(f"Sin pull request: {exc}")
+        elif push:
             _git(worktree, "push", "-u", "origin", branch)
             store.audit(ACTOR, "branch_pushed", branch=branch)
 
@@ -267,15 +393,82 @@ def run_developer(store: RunStore, repo: str | Path, agent_factory: AgentFactory
     change = Change(
         run_id=store.run_id,
         branch=branch,
-        pull_request_url=None,  # sin token de GitHub; el PR se abre a mano desde la rama
+        pull_request_url=pr_url,
         files_modified=files,
         test_result="passed" if result.passed else "failed",
         test_summary=result.summary,
+        deliverables=build_deliverables(design, req.affected_service, location),
         body=body,
     )
     store.write(change, actor=ACTOR)
     store.audit(ACTOR, "developer_finished", passed=result.passed, attempts=len(summaries))
     return change
+
+
+def integrate_change(store: RunStore, repo: str | Path, log: Callable[[str], None] = lambda m: None) -> Change:
+    """Tras la aprobación humana del cambio: abre el PR si falta y lo mergea en el repo de origen.
+
+    Sin repo de GitHub o sin GITHUB_TOKEN no hace nada (lo registra). Un merge rechazado por GitHub
+    (por ejemplo, porque la rama cambió después de la aprobación) detiene el flujo.
+    """
+    change = store.read(Change)
+    if change.approval.status != "aprobado" or change.test_result != "passed":
+        raise NotApprovedError("el cambio no está aprobado o sus pruebas no pasan; no se integra")
+    if change.merge_commit:
+        return change
+    req = store.read(Requirement)
+    try:
+        location = locate(req, store.path, Path(repo).resolve())
+    except (WorkspaceError, ValueError) as exc:
+        raise DeveloperError(str(exc)) from exc
+    if location.repo is None:
+        store.audit(ACTOR, "merge_skipped", reason="el código es de este proyecto, no de un repo de GitHub")
+        return change
+    pr_url = change.pull_request_url
+    try:
+        if not pr_url:
+            worktree = _worktree_path(store, location) or location.root / WORKTREES_DIR / store.run_id
+            design = store.read(Design)
+            pr_url = push_and_open_pr(location, worktree, change.branch, title=f"[Delivery Crew] {req.title}",
+                                      body=_pr_body(req, design, "(ver 03-cambio.md)", change.test_summary))
+            store.audit(ACTOR, "pull_request_opened", url=pr_url, branch=change.branch)
+        sha = merge_pull_request(location, change.branch, pr_url,
+                                 title=f"{req.title} (Delivery Crew {store.run_id})")
+    except WorkspaceError as exc:
+        if "GITHUB_TOKEN" in str(exc):
+            store.audit(ACTOR, "merge_skipped", reason=str(exc))
+            log(f"Sin merge: {exc}")
+            return change
+        raise DeveloperError(str(exc)) from exc
+    change = change.model_copy(update={"pull_request_url": pr_url, "merge_commit": sha[:40] if sha else None})
+    store.write(change, actor=ACTOR)
+    store.audit(ACTOR, "pull_request_merged", url=pr_url, commit=sha)
+    log(f"Pull request mergeado en {location.repo.web_url}: {sha[:12]}")
+    return change
+
+
+def _worktree_path(store: RunStore, location: CodeLocation) -> Path | None:
+    """Con un repo clonado, la copia de trabajo va en runs/<id>/wt (ruta corta: Windows limita a 260)."""
+    return (store.path / "wt").resolve() if location.repo is not None else None
+
+
+def _exclude_worktrees(root: Path) -> None:
+    """Que las copias de trabajo del agente no aparezcan como cambios del repo clonado."""
+    exclude = root / ".git" / "info" / "exclude"
+    if exclude.parent.is_dir():
+        current = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+        if ".worktrees/" not in current:
+            exclude.write_text(current.rstrip("\n") + "\n.worktrees/\n", encoding="utf-8")
+
+
+def _pr_body(req: Requirement, design: Design, summary: str, tests: str) -> str:
+    criteria = "\n".join(f"- {c}" for c in req.acceptance_criteria)
+    return (f"Cambio generado por el agente Desarrollador de **Delivery Crew** (ejecución `{req.run_id}`).\n\n"
+            f"## Pedido\n{req.description}\n\n**Criterios de aceptación**\n{criteria}\n\n"
+            f"## Diseño aprobado por {design.approval.by}\n{design.decision}\n"
+            f"Estándares: {', '.join(design.standards_cited) or '—'}\n\n"
+            f"## Resumen del agente\n{summary}\n\n## Pruebas\n{tests}\n\n"
+            "_Pendiente de revisión humana en el panel de Delivery Crew antes de desplegar._")
 
 
 # --- CLI -------------------------------------------------------------------

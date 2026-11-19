@@ -1,6 +1,6 @@
-import type { Stage } from "./types";
+import type { Deliverable, DeploymentSpec, Stage } from "./types";
 
-type Kind = "text" | "list" | "link" | "money" | "bool" | "badge" | "code";
+type Kind = "text" | "list" | "link" | "money" | "bool" | "badge" | "code" | "spec" | "deliverables" | "log";
 interface Field {
   label: string;
   field: string;
@@ -12,7 +12,9 @@ const FIELDS: Record<Stage["key"], Field[]> = {
     { label: "Título", field: "title" },
     { label: "Descripción", field: "description" },
     { label: "Criterios de aceptación", field: "acceptance_criteria", kind: "list" },
-    { label: "Servicio afectado", field: "affected_service", kind: "code" },
+    { label: "Repositorio", field: "source_repo", kind: "link" },
+    { label: "Commit de partida", field: "source_commit", kind: "code" },
+    { label: "Servicio", field: "affected_service", kind: "code" },
   ],
   design: [
     { label: "Resumen", field: "summary" },
@@ -22,28 +24,119 @@ const FIELDS: Record<Stage["key"], Field[]> = {
     { label: "Veredicto", field: "verdict", kind: "badge" },
     { label: "Estándares citados", field: "standards_cited", kind: "list" },
     { label: "Preguntas abiertas", field: "open_questions", kind: "list" },
+    { label: "Especificación de despliegue", field: "deployment_spec", kind: "spec" },
   ],
   change: [
     { label: "Rama", field: "branch", kind: "code" },
     { label: "Pull request", field: "pull_request_url", kind: "link" },
+    { label: "Merge en el repo", field: "merge_commit", kind: "code" },
     { label: "Archivos modificados", field: "files_modified", kind: "list" },
     { label: "Resultado de pruebas", field: "test_result", kind: "badge" },
     { label: "Resumen de pruebas", field: "test_summary" },
+    { label: "Entregables", field: "deliverables", kind: "deliverables" },
   ],
   deployment: [
     { label: "Cuenta de despliegue", field: "target_account_id", kind: "code" },
     { label: "Región", field: "region", kind: "code" },
+    { label: "Stack de CloudFormation", field: "stack_name", kind: "code" },
+    { label: "Ambiente", field: "environment", kind: "code" },
     { label: "Recursos", field: "resources", kind: "list" },
     { label: "Costo estimado", field: "estimated_cost_usd", kind: "money" },
     { label: "Plan de rollback", field: "rollback_plan" },
+    { label: "Ejecución del despliegue", field: "deployment_status", kind: "badge" },
+    { label: "URL de la API", field: "endpoint_url", kind: "link" },
+    { label: "Commit desplegado", field: "deployed_commit", kind: "code" },
     { label: "Verificación de salud", field: "health_check", kind: "badge" },
-    { label: "Revertido", field: "rolled_back", kind: "bool" },
+    { label: "Registro del despliegue", field: "deployment_log", kind: "log" },
   ],
 };
+
+function SpecView({ spec }: { spec: DeploymentSpec }) {
+  return (
+    <div className="nested">
+      <p>
+        Ambiente <code>{spec.environment}</code> · Exposición <code>{spec.network_exposure}</code> · Datos{" "}
+        <code>{spec.data_classification}</code>
+      </p>
+      <table className="mini">
+        <thead>
+          <tr>
+            <th>Componente</th>
+            <th>Tipo</th>
+            <th>Depende de</th>
+            <th>Configuración</th>
+          </tr>
+        </thead>
+        <tbody>
+          {spec.components.map((c) => (
+            <tr key={c.name}>
+              <td>{c.name}</td>
+              <td>
+                <code>{c.kind}</code>
+              </td>
+              <td>{c.depends_on.join(", ") || "—"}</td>
+              <td>
+                {Object.entries(c.configuration).length === 0
+                  ? "—"
+                  : Object.entries(c.configuration).map(([k, v]) => (
+                      <code key={k} className="kv">
+                        {k}={v}
+                      </code>
+                    ))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p>Health check: {spec.health_check}</p>
+      <p>Rollback: {spec.rollback_strategy}</p>
+      <p>Observabilidad: {spec.observability.join(", ")}</p>
+    </div>
+  );
+}
+
+function DeliverablesView({ items }: { items: Deliverable[] }) {
+  if (items.length === 0) return <span className="muted">Ninguno</span>;
+  return (
+    <table className="mini">
+      <thead>
+        <tr>
+          <th>Componente</th>
+          <th>Tipo</th>
+          <th>Ruta</th>
+          <th>Entrypoint</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((d) => (
+          <tr key={d.component}>
+            <td>{d.component}</td>
+            <td>
+              <code>{d.kind}</code>
+            </td>
+            <td>
+              <code>{d.source_path}</code>
+            </td>
+            <td>{d.entrypoint ? <code>{d.entrypoint}</code> : "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 function Value({ kind = "text", value }: { kind?: Kind; value: unknown }) {
   if (value === null || value === undefined || value === "") return <span className="muted">—</span>;
   switch (kind) {
+    case "spec":
+      return <SpecView spec={value as DeploymentSpec} />;
+    case "deliverables":
+      return <DeliverablesView items={value as Deliverable[]} />;
+    case "log": {
+      const lines = value as string[];
+      if (lines.length === 0) return <span className="muted">—</span>;
+      return <pre className="deploy-log">{lines.join("\n")}</pre>;
+    }
     case "list": {
       const items = value as string[];
       if (items.length === 0) return <span className="muted">Ninguno</span>;

@@ -29,6 +29,13 @@ python -m delivery_crew.check_env
 python -m delivery_crew.check_env --expect-account 123456789012   # antes de desplegar
 ```
 
+## Demo en vivo
+Todo corre local; los agentes usan Bedrock. Guía paso a paso, guion y qué hacer si algo falla: `docs/demo-en-vivo.md`.
+
+```powershell
+.\.venv\Scripts\python.exe -m delivery_crew.api      # terminal 1 (con credenciales AWS)
+cd panel; npm run dev                               # terminal 2: http://127.0.0.1:5173
+```
 ## Documentación
 - `docs/arquitectura.md`: diagramas y decisiones iniciales.
 - `docs/caso-demo.md`: caso demo, guion y plan B.

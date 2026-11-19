@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { Activity } from "./Activity";
 import { api } from "./api";
 import { ArtifactView } from "./artifact";
-import type { AuditEntry, RunDetail, RunState, RunSummary, Stage, StageState } from "./types";
+import { ChangeBody } from "./ChangeBody";
+import { NewRunForm } from "./NewRunForm";
+import type { AuditEntry, Config, NewRun, RunDetail, RunState, RunSummary, Service, Stage, StageState } from "./types";
 
 const POLL_MS = 2000;
 
@@ -188,6 +191,78 @@ function DecisionBox({
   );
 }
 
+/** Segundos desde el inicio de la ejecución; si el orquestador sigue activo, hasta ahora. */
+function liveElapsed(audit: AuditEntry[], active: boolean, now: number): number | null {
+  if (audit.length === 0) return null;
+  const start = Date.parse(audit[0].at);
+  if (Number.isNaN(start)) return null;
+  const end = [...audit].reverse().find((e) => e.action === "flow_completed" || e.action === "flow_stopped");
+  const until = active ? now : end ? Date.parse(end.at) : Date.parse(audit[audit.length - 1].at);
+  return Math.max(0, Math.round((until - start) / 1000));
+}
+
+const OUTCOME_LABEL: Record<string, string> = {
+  completed: "completo",
+  waiting_approval: "esperando aprobación",
+  rejected: "rechazado",
+  blocked: "bloqueado",
+  invalid: "artefacto inválido",
+  failed: "falló",
+};
+
+function RunnerControls({ detail, onResume }: { detail: RunDetail; onResume: (retry: boolean) => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const runner = detail.runner;
+
+  if (runner?.active) {
+    const waiting = detail.stages.some((s) => s.state === "por_aprobar");
+    return waiting ? (
+      <span className="live live-wait">⏸ esperando tu aprobación</span>
+    ) : (
+      <span className="live">● agentes trabajando</span>
+    );
+  }
+  if (detail.state === "completo") return null;
+
+  const changeRejected = detail.stages[2]?.state === "rechazado";
+  const stopped = detail.state === "rechazado" && !changeRejected;
+
+  async function go(retry: boolean) {
+    setBusy(true);
+    setError(null);
+    try {
+      await onResume(retry);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <span className="runner-controls">
+      {runner?.outcome && runner.outcome !== "completed" && (
+        <span className="muted small" title={runner.reason ?? ""}>
+          Orquestador: {OUTCOME_LABEL[runner.outcome] ?? runner.outcome}
+          {runner.reason ? ` · ${runner.reason.slice(0, 90)}` : ""}
+        </span>
+      )}
+      {changeRejected && (
+        <button className="btn btn-small btn-approve" disabled={busy} onClick={() => go(true)}>
+          ↻ Que el agente lo rehaga con el motivo
+        </button>
+      )}
+      {!changeRejected && !stopped && (
+        <button className="btn btn-small" disabled={busy} onClick={() => go(false)}>
+          ▶ Reanudar agentes
+        </button>
+      )}
+      {error && <span className="error small">{error}</span>}
+    </span>
+  );
+}
+
 export default function App() {
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -196,10 +271,22 @@ export default function App() {
   const [pickedStep, setPickedStep] = useState<number | null>(null);
   const [connError, setConnError] = useState<string | null>(null);
   const [manualHours, setManualHours] = useLocalState<number>("manualHours", 4);
+  const [name, setName] = useLocalState("approverName", "");
+  const [config, setConfig] = useState<Config | null>(null);
+  const [services, setServices] = useState<Service[]>([]);
+  const [showNew, setShowNew] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    api.config().then(setConfig).catch(() => setConfig(null));
+    api.services().then(setServices).catch(() => setServices([]));
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
 
   const refresh = useCallback(async () => {
     try {
-      const list = await api.runs();
+      const list = (await api.runs()).sort((a, b) => (b.started_at ?? "").localeCompare(a.started_at ?? ""));
       setRuns(list);
       setConnError(null);
       const id = selectedId ?? list[0]?.run_id ?? null;
@@ -241,17 +328,35 @@ export default function App() {
   const stage = detail?.stages.find((s) => s.step === activeStep) ?? null;
 
   const manualSeconds = Math.max(0, manualHours) * 3600;
-  const elapsed = detail?.metrics.elapsed_seconds ?? null;
+  const elapsed = liveElapsed(audit, !!detail?.runner?.active, now) ?? detail?.metrics.elapsed_seconds ?? null;
   const saving =
     detail?.state === "completo" && elapsed !== null && manualSeconds > 0
       ? Math.max(0, Math.round((1 - elapsed / manualSeconds) * 100))
       : null;
+
+  async function createRun(body: NewRun) {
+    setName(body.requested_by);
+    const created = await api.createRun(body);
+    setShowNew(false);
+    selectRun(created.run_id);
+    void refresh();
+  }
+
+  async function resume(retryRejected: boolean) {
+    if (!detail) return;
+    const updated = await api.resume(detail.run_id, retryRejected);
+    setDetail(updated);
+    void refresh();
+  }
 
   return (
     <div className="layout">
       <aside className="sidebar">
         <h1>Delivery Crew</h1>
         <p className="muted">De requerimiento a despliegue, con aprobación humana.</p>
+        <button className="btn btn-approve btn-block" onClick={() => setShowNew(true)}>
+          + Nueva ejecución
+        </button>
         <h2>Ejecuciones</h2>
         {runs.length === 0 && !connError && <p className="muted">No hay ejecuciones todavía.</p>}
         <ul className="runs">
@@ -281,13 +386,18 @@ export default function App() {
           </div>
         )}
 
-        {!detail && !connError && <p className="muted">Selecciona una ejecución.</p>}
+        {showNew && (
+          <NewRunForm config={config} services={services} defaultName={name} onCreate={createRun} onCancel={() => setShowNew(false)} />
+        )}
 
-        {detail && (
+        {!showNew && !detail && !connError && <p className="muted">Selecciona una ejecución o lanza una nueva.</p>}
+
+        {!showNew && detail && (
           <>
             <header className="run-header">
               <h2>{detail.run_id}</h2>
               <Pill tone={RUN_TONE[detail.state]}>{RUN_LABEL[detail.state]}</Pill>
+              <RunnerControls detail={detail} onResume={resume} />
             </header>
 
             <section className="pipeline" aria-label="Etapas">
@@ -311,7 +421,9 @@ export default function App() {
             <section className="metrics">
               <div className="metric">
                 <span className="metric-value">{formatDuration(elapsed)}</span>
-                <span className="metric-label">Tiempo del flujo</span>
+                <span className="metric-label">
+                  Tiempo del flujo{detail.runner?.active ? " (corriendo)" : ""}
+                </span>
               </div>
               <div className="metric">
                 <span className="metric-value">
@@ -352,25 +464,14 @@ export default function App() {
                   <code>{stage.filename}</code>
                 </div>
                 <ArtifactView stage={stage} />
+                {stage.key === "change" && typeof stage.artifact?.body === "string" && (
+                  <ChangeBody body={stage.artifact.body} />
+                )}
                 <DecisionBox key={`${detail.run_id}-${stage.step}`} stage={stage} onDecide={(status, by, reason) => decide(stage.step, status, by, reason)} />
               </section>
             )}
 
-            <section className="audit">
-              <h2>Auditoría</h2>
-              {audit.length === 0 ? (
-                <p className="muted">Sin eventos.</p>
-              ) : (
-                <ol>
-                  {[...audit].reverse().map((e, i) => (
-                    <li key={`${e.at}-${i}`}>
-                      <time>{formatTime(e.at)}</time>
-                      <strong>{e.actor}</strong> {describeAction(e)}
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </section>
+            <Activity entries={audit} live={!!detail.runner?.active} />
           </>
         )}
       </main>

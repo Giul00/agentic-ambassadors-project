@@ -11,7 +11,9 @@ from datetime import datetime, timezone
 from typing import Any, ClassVar, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from .conventions import CONFIGURATION_KEYS, SAFE_VALUE
 
 ApprovalStatus = Literal["pendiente", "aprobado", "rechazado"]
 Verdict = Literal["aprobado", "observaciones", "rechazado"]
@@ -101,6 +103,10 @@ class Requirement(Artifact):
     description: str = Field(min_length=10)
     acceptance_criteria: list[str] = Field(min_length=1)
     affected_service: str = Field(min_length=1)
+    # Código de origen: si se indica, se clona ese repo de GitHub en runs/<id>/workspace/.
+    source_repo: str | None = Field(default=None, pattern=r"^https://github\.com/[A-Za-z0-9-]{1,39}/[A-Za-z0-9._-]{1,100}?(\.git)?/?$")
+    source_ref: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._/-]{1,100}$")
+    source_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,40}$")
 
 
 class DeploymentComponent(BaseModel):
@@ -114,6 +120,29 @@ class DeploymentComponent(BaseModel):
     # Arquitectura puede expresar redes, cifrado, escalamiento y políticas anidadas.
     # SysOps valida y traduce estos datos; no se interpolan directamente en shell.
     configuration: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("depends_on", "configuration", mode="before")
+    @classmethod
+    def _null_is_empty(cls, value, info):
+        # Los modelos de lenguaje a veces envían null en campos opcionales.
+        if value is None:
+            return [] if info.field_name == "depends_on" else {}
+        return value
+
+    @model_validator(mode="after")
+    def _configuration_follows_convention(self) -> "DeploymentComponent":
+        allowed = CONFIGURATION_KEYS.get(self.kind)
+        if allowed is not None:
+            unknown = sorted(set(self.configuration) - allowed)
+            if unknown:
+                raise ValueError(
+                    f"configuración no reconocida para {self.kind} '{self.name}': {', '.join(unknown)}; "
+                    f"claves permitidas: {', '.join(sorted(allowed))}"
+                )
+        bad = sorted(k for k, v in self.configuration.items() if not SAFE_VALUE.fullmatch(v))
+        if bad:
+            raise ValueError(f"valores no permitidos en configuración ({', '.join(bad)}): use letras, números, '_', '.' o '-'")
+        return self
 
 
 class DeploymentSpec(BaseModel):
@@ -178,6 +207,8 @@ class Change(Artifact):
     test_result: Literal["passed", "failed"]
     test_summary: str = Field(min_length=1)
     deliverables: list[DeployableArtifact] = Field(default_factory=list)
+    # Integración en el repo de origen tras la aprobación humana (commit del squash merge).
+    merge_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,40}$")
 
     @model_validator(mode="after")
     def _pr_only_if_tests_pass(self) -> "Change":
@@ -199,6 +230,14 @@ class Deployment(Artifact):
     rollback_plan: str = Field(min_length=10)
     health_check: Literal["pendiente", "ok", "fallo"] = "pendiente"
     rolled_back: bool = False
+    # Ejecución real (los completa el ejecutor de despliegue tras la aprobación de SysOps).
+    stack_name: str | None = Field(default=None, pattern=r"^[A-Za-z][A-Za-z0-9-]{0,127}$")
+    project_name: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]{2,30}$")
+    environment: str | None = None
+    endpoint_url: str | None = Field(default=None, pattern=r"^https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~/-]*)?$")
+    deployed_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{7,40}$")
+    deployment_status: Literal["no_ejecutado", "en_curso", "desplegado", "fallido"] = "no_ejecutado"
+    deployment_log: list[str] = Field(default_factory=list)
 
 
 ARTIFACTS: tuple[type[Artifact], ...] = (Requirement, Design, Change, Deployment)

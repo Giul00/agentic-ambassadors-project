@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: API de autorización sintética con Lambda y contador DynamoDB parametrizado por ambiente.
+Description: API sintética con API Gateway (proxy), Lambda y una tabla DynamoDB, parametrizada por ambiente.
 
 Parameters:
   ProjectName:
@@ -14,24 +14,47 @@ Parameters:
     Type: String
   LambdaHandler:
     Type: String
-    Default: handler.lambda_handler
+    AllowedPattern: '^[A-Za-z0-9_.]{1,128}$'
+    Description: Entrypoint del entregable de Desarrollo (DeployableArtifact.entrypoint).
+  TablePartitionKey:
+    Type: String
+    Default: pk
+    AllowedPattern: '^[A-Za-z0-9_.-]{1,64}$'
+    Description: Clave de partición (DeploymentComponent.configuration.partition_key).
+  TableTtlAttribute:
+    Type: String
+    Default: ''
+    AllowedPattern: '^[A-Za-z0-9_.-]{0,64}$'
+    Description: Atributo TTL (configuration.ttl_attribute). Vacío = sin TTL.
+  StorageBackend:
+    Type: String
+    Default: dynamodb
+    AllowedValues: [dynamodb, memory]
+    Description: Adaptador de persistencia de la Lambda (configuration.STORAGE_BACKEND).
+
+Conditions:
+  HasTtl: !Not [!Equals [!Ref TableTtlAttribute, '']]
 
 Resources:
-  FrequencyTable:
+  Table:
     Type: AWS::DynamoDB::Table
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: card_token
+        - AttributeName: !Ref TablePartitionKey
           AttributeType: S
       KeySchema:
-        - AttributeName: card_token
+        - AttributeName: !Ref TablePartitionKey
           KeyType: HASH
-      TimeToLiveSpecification:
-        AttributeName: expires_at
-        Enabled: true
+      TimeToLiveSpecification: !If
+        - HasTtl
+        - AttributeName: !Ref TableTtlAttribute
+          Enabled: true
+        - !Ref AWS::NoValue
       SSESpecification:
         SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
       Tags:
         - Key: project
           Value: !Ref ProjectName
@@ -48,13 +71,19 @@ Resources:
             Principal: {Service: lambda.amazonaws.com}
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: frequency-table-access
+        - PolicyName: table-access
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
               - Effect: Allow
-                Action: [dynamodb:GetItem, dynamodb:PutItem]
-                Resource: !GetAtt FrequencyTable.Arn
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt Table.Arn
               - Effect: Allow
                 Action: [logs:CreateLogStream, logs:PutLogEvents]
                 Resource: !Sub '${FunctionLogGroup.Arn}:*'
@@ -80,33 +109,35 @@ Resources:
         S3Key: !Ref ArtifactKey
       Environment:
         Variables:
-          FREQUENCY_TABLE_NAME: !Ref FrequencyTable
+          TABLE_NAME: !Ref Table
+          STORAGE_BACKEND: !Ref StorageBackend
       Tags:
         - Key: project
           Value: !Ref ProjectName
         - Key: environment
           Value: !Ref Environment
 
-  AuthorizationApi:
+  # La API no lleva tags: el rol del workshop no permite etiquetar API Gateway.
+  Api:
     Type: AWS::ApiGateway::RestApi
     Properties:
       Name: !Sub '${ProjectName}-${Environment}-api'
       EndpointConfiguration:
         Types: [REGIONAL]
 
-  AuthorizeResource:
+  ProxyResource:
     Type: AWS::ApiGateway::Resource
     Properties:
-      RestApiId: !Ref AuthorizationApi
-      ParentId: !GetAtt AuthorizationApi.RootResourceId
-      PathPart: authorize
+      RestApiId: !Ref Api
+      ParentId: !GetAtt Api.RootResourceId
+      PathPart: '{proxy+}'
 
-  AuthorizeMethod:
+  ProxyMethod:
     Type: AWS::ApiGateway::Method
     Properties:
-      RestApiId: !Ref AuthorizationApi
-      ResourceId: !Ref AuthorizeResource
-      HttpMethod: POST
+      RestApiId: !Ref Api
+      ResourceId: !Ref ProxyResource
+      HttpMethod: ANY
       AuthorizationType: NONE
       Integration:
         Type: AWS_PROXY
@@ -121,19 +152,20 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !Ref Function
       Principal: apigateway.amazonaws.com
-      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${AuthorizationApi}/*/POST/authorize'
+      SourceArn: !Sub 'arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*/*'
 
   ApiDeployment:
     Type: AWS::ApiGateway::Deployment
-    DependsOn: AuthorizeMethod
+    DependsOn: ProxyMethod
     Properties:
-      RestApiId: !Ref AuthorizationApi
+      RestApiId: !Ref Api
       StageName: !Ref Environment
 
 Outputs:
-  FunctionArn:
-    Value: !GetAtt Function.Arn
-  FrequencyTableName:
-    Value: !Ref FrequencyTable
-  AuthorizeUrl:
-    Value: !Sub 'https://${AuthorizationApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/authorize'
+  ApiUrl:
+    Description: URL base de la API (sin barra final).
+    Value: !Sub 'https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+  FunctionName:
+    Value: !Ref Function
+  TableName:
+    Value: !Ref Table
