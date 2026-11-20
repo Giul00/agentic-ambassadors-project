@@ -8,7 +8,7 @@ El formato está descrito en .kiro/steering/contratos-agentes.md.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -117,7 +117,9 @@ class DeploymentComponent(BaseModel):
     name: str = Field(min_length=2)
     kind: str = Field(min_length=2, pattern=r"^[a-z][a-z0-9_-]*$")
     depends_on: list[str] = Field(default_factory=list)
-    configuration: dict[str, str] = Field(default_factory=dict)
+    # Arquitectura puede expresar redes, cifrado, escalamiento y políticas anidadas.
+    # SysOps valida y traduce estos datos; no se interpolan directamente en shell.
+    configuration: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("depends_on", "configuration", mode="before")
     @classmethod

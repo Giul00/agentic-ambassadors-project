@@ -58,6 +58,50 @@ def test_deployment_agent_rejects_missing_compute_artifact(tmp_path: Path):
         create_plan("demo-001", "123456789012", base_dir=str(tmp_path))
 
 
+def test_deployment_agent_can_generate_custom_iac_from_template_context(tmp_path: Path):
+    """A component without a closed profile can be generated, pending human approval."""
+    store = RunStore("demo-001", tmp_path).create()
+    design = _design()
+    design.deployment_spec.components.append(DeploymentComponent(name="ledger", kind="rds"))
+    store.write(design)
+    store.decide(Design, "aprobado", by="arquitecto")
+    store.write(_change())
+    store.decide(Change, "aprobado", by="desarrollador")
+
+    deployment = create_plan("demo-001", "123456789012", base_dir=str(tmp_path), generator=_generated_iac)
+
+    generated = store.path / "generated"
+    assert deployment.approval.status == "pendiente"
+    assert "AWS::RDS::DBInstance" in (generated / "cloudformation" / "stack.yml").read_text(encoding="utf-8")
+    assert "bedrock_with_template_context" in (generated / "manifest.yml").read_text(encoding="utf-8")
+
+
+def _generated_iac(_prompt: str) -> str:
+    return """<cloudformation>
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  Ledger:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: db.t3.micro
+      Engine: postgres
+</cloudformation>
+<gitlab_ci>
+stages: [test, versionador, build, deploy, deploy_QA, deploy_UAT, deploy_PROD]
+validate:
+  stage: test
+  script: [echo validate]
+deploy_qa:
+  stage: deploy_QA
+  when: manual
+  script: [echo deploy]
+deploy_prod:
+  stage: deploy_PROD
+  when: manual
+  script: [echo deploy]
+</gitlab_ci>"""
+
+
 def _design() -> Design:
     return Design(
         run_id="demo-001", summary="Usar servicio administrado.", components=["auth-service", "DynamoDB"],
